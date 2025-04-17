@@ -1,11 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
+import snowflake from "snowflake-sdk";
 
 // Initialize clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
+
+// Initialize Snowflake connection
+const snowflakeConnection = snowflake.createConnection({
+  account: process.env.SNOWFLAKE_ACCOUNT!,
+  username: process.env.SNOWFLAKE_USER!,
+  password: process.env.SNOWFLAKE_PASSWORD!,
+  database: "STICK_DB",
+  schema: "FINANCIAL",
+  role: "STICK_ROLE",
+  warehouse: "STICK_WH",
+});
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,8 +34,8 @@ export async function POST(req: NextRequest) {
     });
     const queryVector = embeddingResponse.data[0].embedding;
 
-    // Query Pinecone across multiple namespaces
-    const namespaces = ["gl", "procount", "ownerpay", "default"];
+    // Query Pinecone
+    const namespaces = ["default"];
     const topK = 10;
 
     const pineconeResults = await Promise.all(
@@ -37,30 +49,65 @@ export async function POST(req: NextRequest) {
       })
     );
 
-    // Combine and sort results by score
-    const combinedResults = pineconeResults
+    const combinedPineconeResults = pineconeResults
       .flat()
       .sort((a, b) => (b.score || 0) - (a.score || 0))
       .slice(0, 3);
 
-    // Prepare top matches for summary with all metadata fields
-    const topMatches = combinedResults.map((match) => {
+    const pineconeData = combinedPineconeResults.map((match) => {
       const metadata = match.metadata || {};
-      // Convert all metadata fields into a string representation
-      const metadataFields = Object.entries(metadata)
+      return Object.entries(metadata)
         .map(([key, value]) => `${key}: ${value || "n/a"}`)
         .join("\n");
-      return metadataFields;
     });
+
+    // Query Snowflake
+    await new Promise((resolve, reject) => {
+      snowflakeConnection.connect((err, conn) => {
+        if (err) reject(err);
+        else resolve(conn);
+      });
+    });
+
+    const snowflakeQuery = `
+      SELECT *
+      FROM S3_GL
+      WHERE DESCRIPTION LIKE '%${query}%'
+         OR ACCTNAME LIKE '%${query}%'
+         OR VENDORNAME LIKE '%${query}%'
+      LIMIT 3
+    `;
+
+    const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
+      snowflakeConnection.execute({
+        sqlText: snowflakeQuery,
+        complete: (err, stmt, rows) => {
+          if (err) reject(err);
+          else resolve(rows || []);
+        },
+      });
+    });
+
+    const snowflakeData = snowflakeResults.map((row) =>
+      Object.entries(row)
+        .map(([key, value]) => `${key}: ${value || "n/a"}`)
+        .join("\n")
+    );
+
+    // Combine Pinecone and Snowflake data
+    const combinedData = [
+      ...pineconeData.map((data, i) => `Pinecone Result ${i + 1}:\n${data}`),
+      ...snowflakeData.map((data, i) => `Snowflake Result ${i + 1}:\n${data}`),
+    ].join("\n\n");
 
     // Generate GPT summary
     const summaryPrompt = `
 You are reviewing accounting data based on this query: '${query}'.
 
-The following rows are the top matches from the accounting records, including all available column data.
-Write a very short summary (2–3 sentences max). Highlight key details relevant to the query, such as account names, balances, dates, or other significant fields. Be clear and skip anything unnecessary.
+The following data includes matches from Pinecone (semantic search) and Snowflake (structured data).
+Write a very short summary (2–3 sentences max). Highlight key details like account names, balances, dates, or vendors relevant to the query.
 
-${topMatches.join("\n\n")}
+${combinedData}
     `.trim();
 
     const gptResponse = await openai.chat.completions.create({
@@ -84,5 +131,7 @@ ${topMatches.join("\n\n")}
       { message: "Error processing query." },
       { status: 500 }
     );
+  } finally {
+    snowflakeConnection.destroy();
   }
 }
