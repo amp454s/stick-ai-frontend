@@ -22,38 +22,45 @@ export async function POST(req: NextRequest) {
     });
     const queryVector = embeddingResponse.data[0].embedding;
 
-    // Query Pinecone
-    const results = await index.query({
-      vector: queryVector,
-      topK: 10,
-      includeMetadata: true,
-    });
+    // Query Pinecone across multiple namespaces
+    const namespaces = ["gl", "procount", "ownerpay", "default"];
+    const topK = 10;
 
-    // Prepare top matches for summary
-    const topMatches = results.matches.slice(0, 3).map((match) => ({
-      row: match.metadata?.row || "n/a",
-      acctName: match.metadata?.AcctName || "n/a",
-      wellCode: match.metadata?.WellCode || "n/a",
-      balance: match.metadata?.Balance || "n/a",
-    }));
+    const pineconeResults = await Promise.all(
+      namespaces.map(async (namespace) => {
+        const result = await index.namespace(namespace).query({
+          vector: queryVector,
+          topK,
+          includeMetadata: true,
+        });
+        return result.matches;
+      })
+    );
+
+    // Combine and sort results by score
+    const combinedResults = pineconeResults
+      .flat()
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 3);
+
+    // Prepare top matches for summary with all metadata fields
+    const topMatches = combinedResults.map((match) => {
+      const metadata = match.metadata || {};
+      // Convert all metadata fields into a string representation
+      const metadataFields = Object.entries(metadata)
+        .map(([key, value]) => `${key}: ${value || "n/a"}`)
+        .join("\n");
+      return metadataFields;
+    });
 
     // Generate GPT summary
     const summaryPrompt = `
 You are reviewing accounting data based on this query: '${query}'.
 
-The following rows are the top matches from the accounting records.
-Write a very short summary (2–3 sentences max). Highlight key accounts or balances related to the query. Be clear and skip anything unnecessary.
+The following rows are the top matches from the accounting records, including all available column data.
+Write a very short summary (2–3 sentences max). Highlight key details relevant to the query, such as account names, balances, dates, or other significant fields. Be clear and skip anything unnecessary.
 
-${topMatches
-  .map(
-    (m) => `
-Row ${m.row}
-AcctName: ${m.acctName}
-WellCode: ${m.wellCode}
-Balance: ${m.balance}
-`
-  )
-  .join("\n")}
+${topMatches.join("\n\n")}
     `.trim();
 
     const gptResponse = await openai.chat.completions.create({
