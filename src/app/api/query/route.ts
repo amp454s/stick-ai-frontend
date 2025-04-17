@@ -132,6 +132,8 @@ ${combinedData}
       { status: 500 }
     );
   } finally {
-    snowflakeConnection.destroy();
+    snowflakeConnection.destroy((err: any) => {
+      if (err) console.error("Error closing Snowflake connection:", err);
+    });
   }
 }
