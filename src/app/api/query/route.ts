@@ -4,7 +4,6 @@ import { Pinecone } from "@pinecone-database/pinecone";
 import snowflake from "snowflake-sdk";
 
 // Suppressing deprecation warning
-
 // Initialize clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
@@ -77,7 +76,6 @@ export async function POST(req: NextRequest) {
       WHERE DESCRIPTION LIKE '%${query}%'
          OR ACCTNAME LIKE '%${query}%'
          OR VENDORNAME LIKE '%${query}%'
-      LIMIT 3
     `;
 
     const snowflakeResults = await new Promise<any[]>((resolve, reject) => {

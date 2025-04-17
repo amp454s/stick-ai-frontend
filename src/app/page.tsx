@@ -5,10 +5,12 @@ import { useState } from "react";
 export default function Home() {
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState("");
+  const [rawData, setRawData] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setResponse("Processing...");
+    setRawData("");
     try {
       const res = await fetch("/api/query", {
         method: "POST",
@@ -16,7 +18,8 @@ export default function Home() {
         body: JSON.stringify({ query }),
       });
       const data = await res.json();
-      setResponse(data.message);
+      setResponse(data.summary || data.message);
+      setRawData(data.rawData || "");
     } catch (error) {
       setResponse("Error processing query.");
     }
@@ -44,8 +47,14 @@ export default function Home() {
       </form>
       {response && (
         <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
-          <h2 className="text-xl font-semibold mb-2 text-gray-900">Response:</h2>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900">Summary:</h2>
           <p className="text-gray-800">{response}</p>
+        </div>
+      )}
+      {rawData && (
+        <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
+          <h2 className="text-xl font-semibold mb-2 text-gray-900">Raw Data:</h2>
+          <pre className="text-gray-800 whitespace-pre-wrap">{rawData}</pre>
         </div>
       )}
     </div>
