@@ -24,14 +24,16 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
-      <h1 className="text-3xl font-bold mb-6">Stick AI - Financial Query Assistant</h1>
+      <h1 className="text-3xl font-bold mb-6 text-gray-900">
+        Stick AI - Financial Query Assistant
+      </h1>
       <form onSubmit={handleSubmit} className="w-full max-w-md">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask a financial question (e.g., 'What’s the balance for vendor XYZ?')"
-          className="w-full p-2 mb-4 border rounded"
+          className="w-full p-2 mb-4 border rounded text-gray-900 placeholder-gray-500"
         />
         <button
           type="submit"
@@ -42,8 +44,8 @@ export default function Home() {
       </form>
       {response && (
         <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
-          <h2 className="text-xl font-semibold mb-2">Response:</h2>
-          <p>{response}</p>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900">Response:</h2>
+          <p className="text-gray-800">{response}</p>
         </div>
       )}
     </div>
