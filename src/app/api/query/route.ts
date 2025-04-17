@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import snowflake from "snowflake-sdk";
 
+// Suppressing deprecation warning
+
 // Initialize clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
