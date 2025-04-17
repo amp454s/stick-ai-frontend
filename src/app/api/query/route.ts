@@ -27,7 +27,6 @@ export async function POST(req: NextRequest) {
       vector: queryVector,
       topK: 10,
       includeMetadata: true,
-      namespace: "default",
     });
 
     // Prepare top matches for summary
