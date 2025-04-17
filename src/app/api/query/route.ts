@@ -73,9 +73,11 @@ export async function POST(req: NextRequest) {
     const snowflakeQuery = `
       SELECT *
       FROM S3_GL
-      WHERE DESCRIPTION LIKE '%${query}%'
+      WHERE (DESCRIPTION LIKE '%${query}%'
          OR ACCTNAME LIKE '%${query}%'
-         OR VENDORNAME LIKE '%${query}%'
+         OR VENDORNAME LIKE '%${query}%')
+        AND (ACCTNAME LIKE '%electric%'
+             OR DESCRIPTION LIKE '%electric%')
     `;
 
     const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
@@ -94,7 +96,7 @@ export async function POST(req: NextRequest) {
         .join("\n")
     );
 
-    // Combine Pinecone and Snowflake data
+    // Combine Pinecone and Snowflake data with labels
     const combinedData = [
       ...pineconeData.map((data, i) => `Pinecone Result ${i + 1}:\n${data}`),
       ...snowflakeData.map((data, i) => `Snowflake Result ${i + 1}:\n${data}`),
@@ -105,7 +107,7 @@ export async function POST(req: NextRequest) {
 You are reviewing accounting data based on this query: '${query}'.
 
 The following data includes matches from Pinecone (semantic search) and Snowflake (structured data).
-Write a very short summary (2–3 sentences max). Highlight key details like account names, balances, dates, or vendors relevant to the query.
+Write a very short summary (2–3 sentences max). Group the data by accounting period (e.g., PER_END_DATE) if specified in the query, and highlight key details like electrical expenses, vendors, and total balances.
 
 ${combinedData}
     `.trim();
@@ -124,11 +126,15 @@ ${combinedData}
 
     const summary = gptResponse.choices[0].message.content;
 
-    return NextResponse.json({ message: summary });
+    // Return both the summary and raw data
+    return NextResponse.json({
+      summary: summary,
+      rawData: combinedData,
+    });
   } catch (error) {
     console.error("Error processing query:", error);
     return NextResponse.json(
-      { message: "Error processing query." },
+      { message: "Error processing query.", error: String(error) },
       { status: 500 }
     );
   } finally {
