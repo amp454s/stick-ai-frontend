@@ -3,13 +3,17 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 
 // Initialize clients
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
 
 export async function POST(req: NextRequest) {
   try {
     const { query } = await req.json();
+
+    if (!query) {
+      return NextResponse.json({ message: "Query is required" }, { status: 400 });
+    }
 
     // Create embedding for query
     const embeddingResponse = await openai.embeddings.create({
