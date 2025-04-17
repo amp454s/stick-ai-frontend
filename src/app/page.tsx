@@ -28,12 +28,12 @@ export default function Home() {
         Stick AI - Financial Query Assistant
       </h1>
       <form onSubmit={handleSubmit} className="w-full max-w-md">
-        <input
-          type="text"
+        <textarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask a financial question (e.g., 'What’s the balance for vendor XYZ?')"
-          className="w-full p-2 mb-4 border rounded text-gray-900 placeholder-gray-500"
+          className="w-full p-2 mb-4 border rounded text-gray-900 placeholder-gray-500 resize-y min-h-[80px]"
+          rows={3}
         />
         <button
           type="submit"
