@@ -8,6 +8,13 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
 
+// Column mapping for common terms to actual column names
+const columnMapping: { [key: string]: string } = {
+  "accounting period": "PER_END_DATE",
+  "vendor": "VENDORNAME",
+  "account name": "ACCTNAME",
+};
+
 // Helper to fetch column names from S3_GL table
 async function getTableColumns(connection: any): Promise<string[]> {
   return new Promise((resolve, reject) => {
@@ -33,12 +40,12 @@ async function interpretQuery(query: string): Promise<any> {
       {
         role: "system",
         content: `
-          You are an expert in interpreting financial queries. 
+          You are an expert in interpreting financial queries.
           Given a user's query, extract the following:
-          - data_type: The type of financial data (e.g., expenses, balances).
-          - group_by: An array of fields to group by (e.g., ["PER_END_DATE"]).
-          - filters: An object with fields and conditions (e.g., {"ACCTNAME": ["LIKE", "%electric%"]}).
-          Return the result as a JSON object. If unsure, provide default values.
+          - data_type: The type of financial data (e.g., 'expenses', 'balances').
+          - group_by: An array of fields to group by (e.g., ['accounting period']).
+          - filters: An object with a 'keyword' for filtering (e.g., { keyword: 'electric' } if the query mentions 'electric expenses').
+          Return the result as a JSON object. If unsure, provide default values like { data_type: 'balances', group_by: [], filters: {} }.
         `,
       },
       { role: "user", content: query },
@@ -47,11 +54,17 @@ async function interpretQuery(query: string): Promise<any> {
   return JSON.parse(response.choices[0].message.content || "{}");
 }
 
-// Helper to build Snowflake query dynamically for raw data
-function buildSnowflakeRawQuery(interpretation: any, tableColumns: string[]): string {
+// Helper to build Snowflake query dynamically
+function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw: boolean = false): string {
+  const data_type = interpretation.data_type || "balances";
+  const group_by = (interpretation.group_by || []).map((term: string) => columnMapping[term.toLowerCase()] || term).filter((col: string) => tableColumns.includes(col));
   const filters = interpretation.filters || {};
+
   let whereClause = "";
-  if (filters && typeof filters === "object") {
+  if (filters.keyword) {
+    const keyword = filters.keyword;
+    whereClause = `(ACCTNAME LIKE '%${keyword}%' OR DESCRIPTION LIKE '%${keyword}%' OR ANNOTATION LIKE '%${keyword}%')`;
+  } else if (filters && typeof filters === "object") {
     whereClause = Object.entries(filters)
       .filter(([field, condition]) => tableColumns.includes(field) && condition)
       .map(([field, condition]) => {
@@ -63,12 +76,27 @@ function buildSnowflakeRawQuery(interpretation: any, tableColumns: string[]): st
       .join(" AND ");
   }
 
-  return `
-    SELECT *
-    FROM STICK_DB.FINANCIAL.S3_GL
-    ${whereClause ? `WHERE ${whereClause}` : ""}
-    LIMIT 100
-  `.trim();
+  if (isRaw) {
+    return `
+      SELECT *
+      FROM STICK_DB.FINANCIAL.S3_GL
+      ${whereClause ? `WHERE ${whereClause}` : ""}
+      LIMIT 100
+    `.trim();
+  } else {
+    const selectFields = group_by.length > 0 ? group_by.join(", ") + ", " : "";
+    const aggregate = data_type === "expenses" ? "SUM(BALANCE)" : "BALANCE";
+    const groupByClause = group_by.length > 0 ? `GROUP BY ${group_by.join(", ")}` : "";
+    const orderByClause = group_by.length > 0 ? `ORDER BY ${group_by.join(", ")}` : "";
+    return `
+      SELECT ${selectFields}${aggregate} as TOTAL
+      FROM STICK_DB.FINANCIAL.S3_GL
+      ${whereClause ? `WHERE ${whereClause}` : ""}
+      ${groupByClause}
+      ${orderByClause}
+      LIMIT 100
+    `.trim();
+  }
 }
 
 // Fusion Smart Retrieval Combiner
@@ -91,8 +119,28 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     return `Pinecone Result ${i + 1}:\n${Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`;
   });
 
-  // Build and execute raw Snowflake query
-  const snowflakeRawQuery = buildSnowflakeRawQuery(interpretation, tableColumns);
+  // Fetch aggregated data for summary
+  const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
+  console.log("Snowflake Aggregated Query:", snowflakeAggQuery);
+  const snowflakeAggResults = await new Promise<any[]>((resolve, reject) => {
+    connection.execute({
+      sqlText: snowflakeAggQuery,
+      complete: (err: Error | null, stmt: any, rows: any[]) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      },
+    });
+  });
+  console.log("Snowflake aggregated rows returned:", snowflakeAggResults.length);
+  if (snowflakeAggResults.length > 0) {
+    console.log("First aggregated row:", snowflakeAggResults[0]);
+  }
+  const aggData = snowflakeAggResults.map((row, i) =>
+    `Aggregated Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
+  );
+
+  // Fetch raw data
+  const snowflakeRawQuery = buildSnowflakeQuery(interpretation, tableColumns, true);
   console.log("Snowflake Raw Query:", snowflakeRawQuery);
   const snowflakeRawResults = await new Promise<any[]>((resolve, reject) => {
     connection.execute({
@@ -104,21 +152,24 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     });
   });
   console.log("Snowflake raw rows returned:", snowflakeRawResults.length);
-  const snowflakeRawData = snowflakeRawResults.map((row, i) =>
-    `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
+  if (snowflakeRawResults.length > 0) {
+    console.log("First raw row:", snowflakeRawResults[0]);
+  }
+  const rawData = snowflakeRawResults.map((row, i) =>
+    `Raw Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
   );
 
-  const hasSnowflakeData = snowflakeRawData.length > 0;
-  const combinedData = hasSnowflakeData
-    ? [...snowflakeRawData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])]
-    : pineconeData;
+  // Combine for summary
+  const combinedTextForSummary = [...aggData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])].join("\n\n");
+  console.log("Combined Text for Summary:", combinedTextForSummary);
 
-  const combinedText = combinedData.join("\n\n");
-  console.log("Combined Raw Text:", combinedText);
+  // Raw data text
+  const rawDataText = rawData.length > 0 ? rawData.join("\n\n") : "No raw data available from Snowflake.";
 
   return {
-    combinedText,
-    sourceNote: hasSnowflakeData ? "" : "Note: Results based on semantic search only, as structured data was unavailable."
+    combinedTextForSummary,
+    rawDataText,
+    sourceNote: aggData.length > 0 ? "" : "Note: Results based on semantic search only, as structured data was unavailable."
   };
 }
 
@@ -146,13 +197,15 @@ export async function POST(req: NextRequest) {
     });
 
     const tableColumns = await getTableColumns(connection);
-    const { combinedText, sourceNote } = await fusionSmartRetrieval(query, interpretation, tableColumns, connection);
+    const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, tableColumns, connection);
 
     const summaryPrompt = `
-      You are a financial assistant. Based on the user's query: '${query}', and the data below, provide a concise summary (2-3 sentences) that directly answers the query. Focus on key aspects like totals by period, vendor, or account, and avoid asking the user to interpret raw data. ${sourceNote}
+      You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2-3 sentences) that directly answers the query. Focus on key aspects like totals by period, vendor, or account.
 
-      Data:
-      ${combinedText}
+      Aggregated Data:
+      ${combinedTextForSummary}
+
+      Note: ${sourceNote}
     `.trim();
 
     const gptResponse = await openai.chat.completions.create({
@@ -165,8 +218,8 @@ export async function POST(req: NextRequest) {
 
     const summary = gptResponse.choices[0].message.content;
     console.log("Summary:", summary);
-    console.log("Raw Data:", combinedText);
-    return NextResponse.json({ summary, rawData: combinedText });
+    console.log("Raw Data:", rawDataText);
+    return NextResponse.json({ summary, rawData: rawDataText });
   } catch (error) {
     console.error("Error:", error);
     return NextResponse.json({ message: "Error processing query", error: String(error) }, { status: 500 });
