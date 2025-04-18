@@ -42,7 +42,9 @@ const columnMapping: { [key: string]: string } = {
   "created by": "CREATED_BY",
   "account id": "ACCT_ID",
   "vendor name": "VENDORNAME",
-  "invoice type": "DESCRIPTION"
+  "invoice type": "DESCRIPTION",
+  "description": "DESCRIPTION",
+  "annotation": "ANNOTATION"
 };
 
 function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
@@ -149,7 +151,7 @@ function runSnowflakeQuery(conn: any, sqlText: string): Promise<any[]> {
     console.log("Executing query:\n", sqlText);
     conn.execute({
       sqlText,
-      complete: (err: any, _stmt: any, rows: any[]) => {
+      complete: (err: Error | null, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows);
       },
@@ -197,7 +199,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err: Error | null) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -219,6 +221,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err: Error | null) => err && console.error("Disconnect error:", err));
   }
 }
