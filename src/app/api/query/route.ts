@@ -60,9 +60,13 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
   const group_by = (interpretation.group_by || []).map((term: string) => columnMapping[term.toLowerCase()] || term).filter((col: string) => tableColumns.includes(col));
   const filters = interpretation.filters || {};
 
+  let keyword = filters.keyword || '';
+  if (keyword === 'electricity') {
+    keyword = 'electric'; // Adjust keyword to match variations like 'electric' and 'electrical'
+  }
+
   let whereClause = "";
-  if (filters.keyword) {
-    const keyword = filters.keyword;
+  if (keyword) {
     whereClause = `(ACCTNAME LIKE '%${keyword}%' OR DESCRIPTION LIKE '%${keyword}%' OR ANNOTATION LIKE '%${keyword}%')`;
   } else if (filters && typeof filters === "object") {
     whereClause = Object.entries(filters)
@@ -116,7 +120,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   console.log("Pinecone matches:", pineconeResults.matches.length);
   const pineconeData = pineconeResults.matches.map((match, i) => {
     const metadata = match.metadata || {};
-    return `Pinecone Result ${i + 1}:\n${Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`;
+    return `Pinecone Raw Result ${i + 1}:\n${Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`;
   });
 
   // Fetch aggregated data for summary
@@ -139,7 +143,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     `Aggregated Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
   );
 
-  // Fetch raw data
+  // Fetch raw data from Snowflake
   const snowflakeRawQuery = buildSnowflakeQuery(interpretation, tableColumns, true);
   console.log("Snowflake Raw Query:", snowflakeRawQuery);
   const snowflakeRawResults = await new Promise<any[]>((resolve, reject) => {
@@ -155,16 +159,20 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   if (snowflakeRawResults.length > 0) {
     console.log("First raw row:", snowflakeRawResults[0]);
   }
-  const rawData = snowflakeRawResults.map((row, i) =>
-    `Raw Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
+  const snowflakeRawData = snowflakeRawResults.map((row, i) =>
+    `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
   );
 
-  // Combine for summary
+  // Combine Pinecone and Snowflake raw data
+  const rawData = [
+    ...pineconeData,
+    ...snowflakeRawData,
+  ];
+  const rawDataText = rawData.length > 0 ? rawData.join("\n\n") : "No raw data available from Pinecone or Snowflake.";
+
+  // Combine aggregated data and Pinecone for summary
   const combinedTextForSummary = [...aggData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])].join("\n\n");
   console.log("Combined Text for Summary:", combinedTextForSummary);
-
-  // Raw data text
-  const rawDataText = rawData.length > 0 ? rawData.join("\n\n") : "No raw data available from Snowflake.";
 
   return {
     combinedTextForSummary,
