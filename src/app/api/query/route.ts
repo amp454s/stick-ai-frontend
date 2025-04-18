@@ -42,7 +42,6 @@ async function getTableColumns(connection: any): Promise<string[]> {
   ).then((rows) => rows.map((row: any) => row.COLUMN_NAME));
 }
 
-// Updated to detect summary intent
 async function interpretQuery(query: string): Promise<any> {
   const response = await openai.chat.completions.create({
     model: "gpt-4",
@@ -123,7 +122,6 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
   `.trim();
 }
 
-// Formats an array of Snowflake rows into a markdown table string
 function formatResultsAsTable(rows: any[]): string {
   if (!rows.length) return "No results found.";
 
@@ -132,18 +130,22 @@ function formatResultsAsTable(rows: any[]): string {
   const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
 
   const dataRows = rows.map((row) => {
-    return `| ${headers.map((key) => `${row[key] ?? ""}`).join(" | ")} |`;
+    return `| ${headers
+      .map((key) => {
+        const value = row[key];
+        if (value instanceof Date || (typeof value === "string" && /GMT/.test(value))) {
+          const d = new Date(value);
+          return isNaN(d.getTime()) ? value : d.toISOString().split("T")[0];
+        }
+        return `${value ?? ""}`;
+      })
+      .join(" | ")} |`;
   });
 
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
 
-async function fusionSmartRetrieval(
-  query: string,
-  interpretation: any,
-  tableColumns: string[],
-  connection: any
-): Promise<{ combinedTextForSummary: string; rawDataText: string; sourceNote: string }> {
+async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], connection: any) {
   const isSummary = interpretation.mode === "summary";
 
   const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
