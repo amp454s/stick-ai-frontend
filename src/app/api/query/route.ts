@@ -30,7 +30,7 @@ async function getTableColumns(): Promise<string[]> {
       `,
       complete: (err, stmt, rows) => {
         if (err) reject(err);
-        else resolve(rows.map(row => row.COLUMN_NAME));
+        else resolve((rows || []).map(row => row.COLUMN_NAME));
       },
     });
   });
@@ -136,7 +136,6 @@ export async function POST(req: NextRequest) {
 
       const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
       const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-
       const whereClauses = tableColumns.map(col => `${col} LIKE '%${query}%'`).join(" OR ");
 
       snowflakeQuery = `
