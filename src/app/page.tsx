@@ -5,12 +5,10 @@ import { useState } from "react";
 export default function Home() {
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState("");
-  const [rawData, setRawData] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setResponse("Processing...");
-    setRawData("");
     try {
       const res = await fetch("/api/query", {
         method: "POST",
@@ -18,44 +16,38 @@ export default function Home() {
         body: JSON.stringify({ query }),
       });
       const data = await res.json();
-      setResponse(data.summary || data.message || "No summary available.");
-      setRawData(data.rawData || "No raw data returned.");
+      setResponse(data.message);
     } catch (error) {
       setResponse("Error processing query.");
-      setRawData("Error fetching raw data.");
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4">
-      <h1 className="text-3xl font-bold mb-6 text-gray-900">
+    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
+      <h1 className="text-3xl font-bold mb-6 text-gray-100">
         Stick AI - Financial Query Assistant
       </h1>
-      <form onSubmit={handleSubmit} className="w-full max-w-md">
+      <form onSubmit={handleSubmit} className="w-full max-w-md bg-gray-800 p-4 rounded-lg">
         <textarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask a financial question (e.g., 'What’s the balance for vendor XYZ?')"
-          className="w-full p-2 mb-4 border rounded text-gray-900 placeholder-gray-500 resize-y min-h-[80px]"
+          className="w-full p-2 mb-4 bg-gray-700 text-gray-100 border-gray-600 rounded focus:ring-blue-500 resize-y min-h-[80px] placeholder-gray-400"
           rows={3}
         />
         <button
           type="submit"
-          className="w-full p-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          className="w-full p-2 bg-blue-600 text-white rounded hover:bg-blue-700"
         >
           Submit
         </button>
       </form>
       {response && (
-        <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
-          <h2 className="text-xl font-semibold mb-2 text-gray-900">Summary:</h2>
-          <p className="text-gray-800">{response}</p>
+        <div className="mt-6 w-full max-w-md p-4 bg-gray-800 rounded-lg text-gray-100">
+          <h2 className="text-xl font-semibold mb-2 text-gray-100">Response:</h2>
+          <p>{response}</p>
         </div>
       )}
-      <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
-        <h2 className="text-xl font-semibold mb-2 text-gray-900">Raw Data:</h2>
-        <pre className="text-gray-800 whitespace-pre-wrap">{rawData || "No raw data available."}</pre>
-      </div>
     </div>
   );
 }

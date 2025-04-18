@@ -39,10 +39,10 @@ async function getTableColumns(): Promise<string[]> {
 
 // Mapping of common terms to column names
 const columnMapping: { [key: string]: string } = {
-  "accounting period": "PER_END_DATE",
-  "period": "PER_END_DATE",
-  "vendor": "VENDORNAME",
-  "account name": "ACCTNAME",
+  "accounting period": "Per_End_date",
+  "period": "Per_End_date",
+  "vendor": "VendorName",
+  "account name": "AcctName",
   "account": "ACCT_ID",
   "date": "POSTING_DATE",
   "well": "WELL_NAME",
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
       const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
       snowflakeQuery = `
         SELECT ${groupByFields.join(", ")}${groupByFields.length > 0 ? ", " : ""}SUM(BALANCE) as TOTAL_BALANCE
-        FROM sitck_db.financial.s3_GL
+        FROM STICK_DB.FINANCIAL.S3_GL
         WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
         ${groupByClause}
         ${orderByClause}
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
     } else {
       snowflakeQuery = `
         SELECT *
-        FROM sitck_db.financial.s3_GL
+        FROM STICK_DB.FINANCIAL.S3_GL
         WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
         LIMIT 10
       `;
@@ -205,7 +205,7 @@ export async function POST(req: NextRequest) {
 You are reviewing accounting data based on this query: '${query}'.
 
 The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && !snowflakeData[0].startsWith("Snowflake query failed") ? " and Snowflake (structured data)" : ""}.
-Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (PER_END_DATE) when requested, providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
+Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (Per_End_date) when requested, providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
 
 ${combinedData}
     `.trim();
