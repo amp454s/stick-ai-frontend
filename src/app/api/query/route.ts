@@ -44,7 +44,7 @@ const columnMapping: { [key: string]: string } = {
   "invoice type": "DESCRIPTION"
 };
 
-function safeMapFields(terms: any, type: string): string[] {
+function safeMapFields(terms: any, type: string, availableCols: string[]): string[] {
   if (!terms) return [];
   const arr = Array.isArray(terms) ? terms : [terms];
   const mapped: string[] = [];
@@ -53,8 +53,8 @@ function safeMapFields(terms: any, type: string): string[] {
     if (typeof term === "string") {
       const key = term.toLowerCase().trim();
       const mappedValue = columnMapping[key] || key;
-      if (!columns.includes(mappedValue)) {
-        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}'`);
+      if (!availableCols.includes(mappedValue)) {
+        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}' → '${mappedValue}'`);
       } else {
         mapped.push(mappedValue);
       }
@@ -81,7 +81,7 @@ function formatResultsAsTable(rows: any[]): string {
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
 
-async function interpretQuery(query: string): Promise<any> {
+async function interpretQuery(query: string, columns: string[]): Promise<any> {
   const response = await openai.chat.completions.create({
     model: "gpt-4",
     messages: [
@@ -104,9 +104,9 @@ Return a valid JSON object.`,
 
   return {
     ...parsed,
-    group_by: safeMapFields(parsed.group_by, "group_by"),
+    group_by: safeMapFields(parsed.group_by, "group_by", columns),
     filters: parsed.filters,
-    exclude: parsed.filters?.exclude ? safeMapFields(parsed.filters.exclude, "exclude") : [],
+    exclude: parsed.filters?.exclude ? safeMapFields(parsed.filters.exclude, "exclude", columns) : [],
   };
 }
 
@@ -181,8 +181,6 @@ export async function POST(req: NextRequest) {
   try {
     const { query } = await req.json();
     if (!query) throw new Error("Query is required");
-    const interpretation = await interpretQuery(query);
-    console.log("Interpretation:", interpretation);
 
     conn = snowflake.createConnection({
       account: process.env.SNOWFLAKE_ACCOUNT!,
@@ -194,8 +192,10 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise<void>((res, rej) => conn.connect((err: unknown) => (err ? rej(err) : res())));
+    await new Promise((res, rej) => conn.connect((err: any) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
+    const interpretation = await interpretQuery(query, columns);
+    console.log("Interpretation:", interpretation);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
     const summaryPrompt = `You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2–3 sentences).\n\nAggregated Data:\n${combinedTextForSummary}\n\n${sourceNote}`;
