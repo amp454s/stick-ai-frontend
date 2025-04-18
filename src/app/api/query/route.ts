@@ -53,7 +53,7 @@ function safeMapFields(terms: any, type: string, columns: string[]): string[] {
       const key = term.toLowerCase().trim();
       const mappedValue = columnMapping[key] || key;
       if (!columns.includes(mappedValue)) {
-        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}'`);
+        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}' → '${mappedValue}'`);
       } else {
         mapped.push(mappedValue);
       }
@@ -95,7 +95,6 @@ Return a valid JSON object.`,
       { role: "user", content: query },
     ],
   });
-
   const content = response.choices[0].message.content || "";
   console.log("Raw GPT interpretation output:", content);
   const parsed = JSON.parse(content);
@@ -120,7 +119,7 @@ function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = fal
   });
 
   let whereClause = "";
-  if (keyword && typeof keyword === "string") {
+  if (keyword) {
     const k = keyword.toLowerCase();
     whereClause = `(DESCRIPTION ILIKE '%${k}%' OR VENDORNAME ILIKE '%${k}%' OR ACCTNAME ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`;
   }
@@ -159,6 +158,24 @@ async function getTableColumns(conn: any): Promise<string[]> {
 
 async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], conn: any) {
   const isSummary = interpretation.mode === "summary" || interpretation.mode === "Summarize";
+
+  const embeddingResponse = await openai.embeddings.create({
+    input: query,
+    model: "text-embedding-3-small",
+  });
+  const vector = embeddingResponse.data[0].embedding;
+
+  const pineconeResults = await index.namespace("default").query({
+    vector,
+    topK: 5,
+    includeMetadata: true,
+  });
+
+  const pineconeChunks = pineconeResults.matches.map((match, i) => {
+    const meta = match.metadata || {};
+    return `Pinecone Match ${i + 1} → ${Object.entries(meta).map(([k, v]) => `${k}: ${v}`).join(" | ")}`;
+  }).join("\n\n");
+
   const aggSQL = buildSnowflakeQuery(interpretation, tableColumns, false);
   const rawSQL = buildSnowflakeQuery(interpretation, tableColumns, true);
   const aggResults = await runSnowflakeQuery(conn, aggSQL);
@@ -168,8 +185,8 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   const rawDataTable = formatResultsAsTable(rawResults);
 
   return {
-    combinedTextForSummary: summaryTable,
-    rawDataText: rawDataTable,
+    combinedTextForSummary: [summaryTable, pineconeChunks].join("\n\n"),
+    rawDataText: [pineconeChunks, rawDataTable].join("\n\n"),
     sourceNote: !aggResults.length ? "Note: no structured summary was available." : "",
   };
 }
@@ -190,7 +207,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err: any) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const interpretation = await interpretQuery(query, columns);
     console.log("Interpretation:", interpretation);
@@ -215,6 +232,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err: any) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
   }
 }
