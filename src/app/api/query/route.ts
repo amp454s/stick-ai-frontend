@@ -44,23 +44,21 @@ const columnMapping: { [key: string]: string } = {
   "invoice type": "DESCRIPTION"
 };
 
-function safeMapFields(terms: any, type: string, availableCols: string[]): string[] {
+function safeMapFields(terms: any, type: string, columns: string[]): string[] {
   if (!terms) return [];
   const arr = Array.isArray(terms) ? terms : [terms];
   const mapped: string[] = [];
-
   arr.forEach((term) => {
     if (typeof term === "string") {
       const key = term.toLowerCase().trim();
       const mappedValue = columnMapping[key] || key;
-      if (!availableCols.includes(mappedValue)) {
-        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}' → '${mappedValue}'`);
+      if (!columns.includes(mappedValue)) {
+        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}'`);
       } else {
         mapped.push(mappedValue);
       }
     }
   });
-
   return mapped;
 }
 
@@ -122,7 +120,7 @@ function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = fal
   });
 
   let whereClause = "";
-  if (keyword) {
+  if (keyword && typeof keyword === "string") {
     const k = keyword.toLowerCase();
     whereClause = `(DESCRIPTION ILIKE '%${k}%' OR VENDORNAME ILIKE '%${k}%' OR ACCTNAME ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`;
   }
@@ -196,6 +194,7 @@ export async function POST(req: NextRequest) {
     const columns = await getTableColumns(conn);
     const interpretation = await interpretQuery(query, columns);
     console.log("Interpretation:", interpretation);
+
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
     const summaryPrompt = `You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2–3 sentences).\n\nAggregated Data:\n${combinedTextForSummary}\n\n${sourceNote}`;
