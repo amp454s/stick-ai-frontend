@@ -36,12 +36,44 @@ export default function Home() {
     }
   };
 
+  // Helper to convert Markdown table to CSV
+  const convertMarkdownToCSV = (markdown: string): string => {
+    const lines = markdown.trim().split("\n");
+    const tableLines = lines.filter((line) => line.includes("|"));
+    const cleanedLines = tableLines
+      .map((line) =>
+        line
+          .trim()
+          .replace(/^\|/, "") // remove leading |
+          .replace(/\|$/, "") // remove trailing |
+          .split("|")
+          .map((cell) => `"${cell.trim().replace(/"/g, '""')}"`) // wrap in quotes and escape quotes
+          .join(",")
+      );
+    return cleanedLines.join("\n");
+  };
+
+  const handleDownloadCSV = () => {
+    const csvContent = convertMarkdownToCSV(rawData);
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "stick_ai_output.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
       <h1 className="text-3xl font-bold mb-6 text-gray-100">
         Stick AI - Financial Query Assistant
       </h1>
-      <form onSubmit={handleSubmit} className="w-full max-w-md bg-gray-800 p-4 rounded-lg">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-md bg-gray-800 p-4 rounded-lg"
+      >
         <textarea
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -57,21 +89,33 @@ export default function Home() {
           {loading ? "Processing..." : "Submit"}
         </button>
       </form>
+
       {error && (
         <div className="mt-6 w-full max-w-md p-4 bg-red-800 rounded-lg text-red-100">
           <h2 className="text-xl font-semibold mb-2">Error:</h2>
           <p>{error}</p>
         </div>
       )}
+
       {summary && (
         <div className="mt-6 w-full max-w-md p-4 bg-gray-800 rounded-lg text-gray-100">
           <h2 className="text-xl font-semibold mb-2">Summary:</h2>
           <p>{summary}</p>
         </div>
       )}
+
       {rawData && (
         <div className="mt-6 w-full max-w-full overflow-x-auto border rounded-lg bg-gray-800">
+          <h2 className="text-xl font-semibold p-4 text-gray-100">Raw Data:</h2>
           <pre className="whitespace-pre font-mono text-sm p-4">{rawData}</pre>
+          <div className="p-4">
+            <button
+              onClick={handleDownloadCSV}
+              className="px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700"
+            >
+              Download CSV
+            </button>
+          </div>
         </div>
       )}
     </div>
