@@ -109,7 +109,7 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
     `.trim();
   }
 
-  const selectFields = [...tableColumns].join(", ") + ", ";
+  const selectFields = group_by.length ? group_by.join(", ") + ", " : "";
   const groupByClause = group_by.length ? `GROUP BY ${group_by.join(", ")}` : "";
   const orderByClause = group_by.length ? `ORDER BY ${group_by.join(", ")}` : "";
 
