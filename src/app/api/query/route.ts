@@ -17,7 +17,7 @@ async function getTableColumns(connection: any): Promise<string[]> {
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'
       `,
-      complete: (err, stmt, rows) => {
+      complete: (err: Error | null, stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve((rows || []).map(row => row.COLUMN_NAME));
       },
@@ -106,7 +106,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
     connection.execute({
       sqlText: snowflakeQuery,
-      complete: (err, stmt, rows) => {
+      complete: (err: Error | null, stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows || []);
       },
@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
     });
 
     await new Promise((resolve, reject) => {
-      connection.connect((err: any, conn: any) => (err ? reject(err) : resolve(conn)));
+      connection.connect((err: Error | null, conn: any) => (err ? reject(err) : resolve(conn)));
     });
 
     const tableColumns = await getTableColumns(connection);
@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Error processing query", error: String(error) }, { status: 500 });
   } finally {
     if (connection) {
-      connection.destroy((err: any) => err && console.error("Snowflake disconnect error:", err));
+      connection.destroy((err: Error | null) => err && console.error("Snowflake disconnect error:", err));
     }
   }
 }
