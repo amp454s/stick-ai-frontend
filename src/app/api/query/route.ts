@@ -14,21 +14,35 @@ const columnMapping: { [key: string]: string } = {
   "account name": "ACCTNAME",
 };
 
-// Fetch available columns in the S3_GL table
-async function getTableColumns(connection: any): Promise<string[]> {
+// Run a Snowflake query with full logging
+function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
   return new Promise((resolve, reject) => {
+    console.log("Executing query:\n", sqlText);
     connection.execute({
-      sqlText: `
-        SELECT COLUMN_NAME
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'
-      `,
+      sqlText,
       complete: (err: Error | null, _stmt: any, rows: any[]) => {
-        if (err) reject(err);
-        else resolve(rows.map((row: any) => row.COLUMN_NAME));
+        if (err) {
+          console.error("Snowflake query error:", err);
+          reject(err);
+        } else {
+          console.log(`Query successful. Rows returned: ${rows.length}`);
+          resolve(rows || []);
+        }
       },
     });
   });
+}
+
+// Fetch available columns in the S3_GL table
+async function getTableColumns(connection: any): Promise<string[]> {
+  return runSnowflakeQuery(
+    connection,
+    `
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'
+  `
+  ).then((rows) => rows.map((row: any) => row.COLUMN_NAME));
 }
 
 // Interpret the query using GPT-4
@@ -133,34 +147,14 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   });
 
   const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
-  console.log("Snowflake Agg Query:\n", snowflakeAggQuery);
-
-  const snowflakeAggResults = await new Promise<any[]>((resolve, reject) => {
-    connection.execute({
-      sqlText: snowflakeAggQuery,
-      complete: (err: Error | null, _stmt: any, rows: any[]) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      },
-    });
-  });
+  const snowflakeAggResults = await runSnowflakeQuery(connection, snowflakeAggQuery);
 
   const aggData = snowflakeAggResults.map((row, i) =>
     `Aggregated Result ${i + 1}:\n${Object.entries(row).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`
   );
 
   const snowflakeRawQuery = buildSnowflakeQuery(interpretation, tableColumns, true);
-  console.log("Snowflake Raw Query:\n", snowflakeRawQuery);
-
-  const snowflakeRawResults = await new Promise<any[]>((resolve, reject) => {
-    connection.execute({
-      sqlText: snowflakeRawQuery,
-      complete: (err: Error | null, _stmt: any, rows: any[]) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      },
-    });
-  });
+  const snowflakeRawResults = await runSnowflakeQuery(connection, snowflakeRawQuery);
 
   const rawData = snowflakeRawResults.map((row, i) =>
     `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`
