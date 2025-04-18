@@ -52,11 +52,11 @@ function safeMapFields(terms: any, type: string): string[] {
   arr.forEach((term) => {
     if (typeof term === "string") {
       const key = term.toLowerCase().trim();
-      const mappedValue = columnMapping[key];
-      if (mappedValue) {
-        mapped.push(mappedValue);
-      } else {
+      const mappedValue = columnMapping[key] || key;
+      if (!columns.includes(mappedValue)) {
         console.warn(`⚠️ Unmapped ${type} field fallback: '${term}'`);
+      } else {
+        mapped.push(mappedValue);
       }
     }
   });
@@ -105,25 +105,24 @@ Return a valid JSON object.`,
   return {
     ...parsed,
     group_by: safeMapFields(parsed.group_by, "group_by"),
-    filters: parsed.filters || {},
+    filters: parsed.filters,
+    exclude: parsed.filters?.exclude ? safeMapFields(parsed.filters.exclude, "exclude") : [],
   };
 }
 
 function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = false): string {
   const groupBy = (interpretation.group_by || []).filter((col: string) => columns.includes(col));
   const filters = interpretation.filters || {};
+  const keyword = filters.keyword || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "string") : "");
+  const excludeFilters = filters.exclude || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "object" && f.exclude) : {});
 
-  let keyword = filters.keyword || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "string") : "");
-  if (Array.isArray(keyword)) keyword = keyword[0];
-
-  const excludeFilters = filters.exclude || {};
-  const excludeClauses = Object.entries(excludeFilters).map(([k, v]) => {
+  const excludeClauses = Object.entries(excludeFilters || {}).map(([k, v]) => {
     const field = columnMapping[k.toLowerCase()] || k;
     return Array.isArray(v) ? v.map(val => `${field} != '${val}'`).join(" AND ") : `${field} != '${v}'`;
   });
 
   let whereClause = "";
-  if (keyword && typeof keyword === "string") {
+  if (keyword) {
     const k = keyword.toLowerCase();
     whereClause = `(DESCRIPTION ILIKE '%${k}%' OR VENDORNAME ILIKE '%${k}%' OR ACCTNAME ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`;
   }
@@ -195,7 +194,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
+    await new Promise<void>((res, rej) => conn.connect((err: unknown) => (err ? rej(err) : res())));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -217,6 +216,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err: any) => err && console.error("Disconnect error:", err));
   }
 }
