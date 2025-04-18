@@ -7,6 +7,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
 
+// Expanded column mapping
 const columnMapping: { [key: string]: string } = {
   "gl identifier": "UTM_ID",
   "company": "CO_ID",
@@ -32,6 +33,7 @@ const columnMapping: { [key: string]: string } = {
   "general ledger account": "ACCT_ID",
   "account number": "ACCT_ID",
   "account name": "ACCTNAME",
+  "account code": "ACCT_ID",
   "volume": "QUANTITY",
   "quantity": "QUANTITY",
   "mcf": "QUANTITY",
@@ -40,7 +42,8 @@ const columnMapping: { [key: string]: string } = {
   "created by": "CREATED_BY",
   "account id": "ACCT_ID",
   "vendor name": "VENDORNAME",
-  "invoice type": "DESCRIPTION"
+  "invoice type": "DESCRIPTION",
+  "account code": "ACCT_ID"
 };
 
 function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
@@ -49,15 +52,15 @@ function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
   const mapped: string[] = [];
   const unmapped: string[] = [];
 
-  for (const term of arr) {
+  arr.forEach((term) => {
     const key = term.toLowerCase().trim();
     if (columnMapping[key]) {
       mapped.push(columnMapping[key]);
     } else {
+      mapped.push(key); // fallback to raw
       unmapped.push(term);
-      mapped.push(key); // fallback
     }
-  }
+  });
 
   console.log(`${type === "group_by" ? "📊" : type === "filters" ? "✅" : "🚫"} Mapped ${type} fields:`, mapped);
   if (unmapped.length) console.warn(`⚠️ Unmapped ${type} fields:`, unmapped);
@@ -76,10 +79,12 @@ function formatResultsAsTable(rows: any[]): string {
   const headerRow = `| ${headers.join(" | ")} |`;
   const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
   const dataRows = rows.map((row) => {
-    return `| ${headers.map((key) => {
-      const val = row[key];
-      return val instanceof Date || key.toLowerCase().includes("date") ? formatDate(val) : val ?? "";
-    }).join(" | ")} |`;
+    return `| ${headers
+      .map((key) => {
+        const val = row[key];
+        return val instanceof Date || key.toLowerCase().includes("date") ? formatDate(val) : val ?? "";
+      })
+      .join(" | ")} |`;
   });
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
@@ -104,17 +109,13 @@ Return a valid JSON object.`,
   const content = response.choices[0].message.content || "";
   console.log("Raw GPT interpretation output:", content);
 
-  try {
-    const parsed = JSON.parse(content);
-    return {
-      ...parsed,
-      group_by: mapFields(parsed.group_by, "group_by"),
-      filters: parsed.filters,
-      exclude: parsed.filters?.exclude ? mapFields(parsed.filters.exclude, "exclude") : [],
-    };
-  } catch (err) {
-    throw new Error(`Could not parse GPT output: ${content}`);
-  }
+  const parsed = JSON.parse(content);
+  return {
+    ...parsed,
+    group_by: mapFields(parsed.group_by, "group_by"),
+    filters: parsed.filters,
+    exclude: parsed.filters?.exclude ? mapFields(parsed.filters.exclude, "exclude") : [],
+  };
 }
 
 function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = false): string {
@@ -197,7 +198,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err: any) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -219,6 +220,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err: any) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
   }
 }
