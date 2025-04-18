@@ -44,12 +44,21 @@ async function interpretQuery(query: string): Promise<any> {
           - data_type: 'expenses', 'balances', etc.
           - group_by: array of human-readable field names
           - filters: e.g., { keyword: 'electric' } or { vendor: 'Exxon' }
+          Return a valid JSON object.
         `,
       },
       { role: "user", content: query },
     ],
   });
-  return JSON.parse(response.choices[0].message.content || "{}");
+
+  const rawContent = response.choices[0].message.content || "";
+  console.log("Raw GPT interpretation output:", rawContent);
+
+  try {
+    return JSON.parse(rawContent);
+  } catch (e) {
+    throw new Error(`Failed to parse GPT interpretation:\n${rawContent}`);
+  }
 }
 
 // Build a Snowflake SQL query from interpretation
