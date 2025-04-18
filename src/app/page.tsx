@@ -18,10 +18,11 @@ export default function Home() {
         body: JSON.stringify({ query }),
       });
       const data = await res.json();
-      setResponse(data.summary || data.message);
-      setRawData(data.rawData || "");
+      setResponse(data.summary || data.message || "No summary available.");
+      setRawData(data.rawData || "No raw data returned.");
     } catch (error) {
       setResponse("Error processing query.");
+      setRawData("Error fetching raw data.");
     }
   };
 
@@ -51,12 +52,10 @@ export default function Home() {
           <p className="text-gray-800">{response}</p>
         </div>
       )}
-      {rawData && (
-        <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
-          <h2 className="text-xl font-semibold mb-2 text-gray-900">Raw Data:</h2>
-          <pre className="text-gray-800 whitespace-pre-wrap">{rawData}</pre>
-        </div>
-      )}
+      <div className="mt-6 w-full max-w-md p-4 bg-white rounded shadow">
+        <h2 className="text-xl font-semibold mb-2 text-gray-900">Raw Data:</h2>
+        <pre className="text-gray-800 whitespace-pre-wrap">{rawData || "No raw data available."}</pre>
+      </div>
     </div>
   );
 }
