@@ -96,9 +96,9 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     topK: 3,
     includeMetadata: true,
   });
-  const pineconeData = pineconeResults.matches.map(match => {
+  const pineconeData = pineconeResults.matches.map((match, i) => {
     const metadata = match.metadata || {};
-    return Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n");
+    return `Pinecone Result ${i + 1}:\n${Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`;
   });
 
   const snowflakeQuery = buildSnowflakeQuery(interpretation, tableColumns);
@@ -112,8 +112,8 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
       },
     });
   });
-  const snowflakeData = snowflakeResults.map(row =>
-    Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")
+  const snowflakeData = snowflakeResults.map((row, i) =>
+    `Snowflake Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
   );
 
   const hasSnowflakeData = snowflakeData.length > 0;
@@ -121,8 +121,10 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     ? [...snowflakeData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])]
     : pineconeData;
 
+  const combinedText = combinedData.join("\n\n");
+
   return {
-    combinedText: combinedData.join("\n\n"),
+    combinedText,
     sourceNote: hasSnowflakeData ? "" : "Note: Results based on semantic search only, as structured data was unavailable."
   };
 }
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest) {
     });
 
     const summary = gptResponse.choices[0].message.content;
-    return NextResponse.json({ summary });
+    return NextResponse.json({ summary, rawData: combinedText }); // Include rawData
   } catch (error) {
     console.error("Error:", error);
     return NextResponse.json({ message: "Error processing query", error: String(error) }, { status: 500 });
