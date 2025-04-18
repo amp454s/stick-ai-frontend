@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
 
       if (byMatch) {
         const byClause = byMatch[1];
-        const terms = byClause.split(/and|,/).map(term => term.trim());
+        const terms = byClause.split(/and|,/).map((term: string) => term.trim());
         for (const term of terms) {
           const column = mapQueryTermToColumn(term, tableColumns);
           if (column && !groupByFields.includes(column)) {
