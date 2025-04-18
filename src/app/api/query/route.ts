@@ -3,7 +3,6 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import snowflake from "snowflake-sdk";
 
-// Initialize clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
@@ -14,7 +13,6 @@ const columnMapping: { [key: string]: string } = {
   "account name": "ACCTNAME",
 };
 
-// Run a Snowflake query with full logging
 function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
   return new Promise((resolve, reject) => {
     console.log("Executing query:\n", sqlText);
@@ -33,7 +31,6 @@ function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
   });
 }
 
-// Fetch available columns in the S3_GL table
 async function getTableColumns(connection: any): Promise<string[]> {
   return runSnowflakeQuery(
     connection,
@@ -45,7 +42,7 @@ async function getTableColumns(connection: any): Promise<string[]> {
   ).then((rows) => rows.map((row: any) => row.COLUMN_NAME));
 }
 
-// Interpret the query using GPT-4
+// Updated to detect summary intent
 async function interpretQuery(query: string): Promise<any> {
   const response = await openai.chat.completions.create({
     model: "gpt-4",
@@ -58,6 +55,7 @@ async function interpretQuery(query: string): Promise<any> {
           - data_type: 'expenses', 'balances', etc.
           - group_by: array of human-readable field names
           - filters: e.g., { keyword: 'electric' } or { vendor: 'Exxon' }
+          - mode: 'summary' if the user wants a summarized report; otherwise 'search'
           Return a valid JSON object.
         `,
       },
@@ -75,7 +73,6 @@ async function interpretQuery(query: string): Promise<any> {
   }
 }
 
-// Build a Snowflake SQL query from interpretation
 function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw: boolean = false): string {
   const data_type = interpretation.data_type || "balances";
   const group_by = (interpretation.group_by || [])
@@ -126,8 +123,41 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
   `.trim();
 }
 
-// Fusion Query Handler
-async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], connection: any) {
+// Formats an array of Snowflake rows into a markdown table string
+function formatResultsAsTable(rows: any[]): string {
+  if (!rows.length) return "No results found.";
+
+  const headers = Object.keys(rows[0]);
+  const headerRow = `| ${headers.join(" | ")} |`;
+  const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
+
+  const dataRows = rows.map((row) => {
+    return `| ${headers.map((key) => `${row[key] ?? ""}`).join(" | ")} |`;
+  });
+
+  return [headerRow, separatorRow, ...dataRows].join("\n");
+}
+
+async function fusionSmartRetrieval(
+  query: string,
+  interpretation: any,
+  tableColumns: string[],
+  connection: any
+): Promise<{ combinedTextForSummary: string; rawDataText: string; sourceNote: string }> {
+  const isSummary = interpretation.mode === "summary";
+
+  const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
+  const snowflakeAggResults = await runSnowflakeQuery(connection, snowflakeAggQuery);
+  const aggTable = formatResultsAsTable(snowflakeAggResults);
+
+  if (isSummary) {
+    return {
+      combinedTextForSummary: aggTable,
+      rawDataText: aggTable,
+      sourceNote: "",
+    };
+  }
+
   const pineconeQuery = `${interpretation.data_type || "financial"} ${query}`;
   const embeddingResponse = await openai.embeddings.create({
     input: pineconeQuery,
@@ -146,13 +176,6 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     return `Pinecone Raw Result ${i + 1}:\n${Object.entries(metadata).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`;
   });
 
-  const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
-  const snowflakeAggResults = await runSnowflakeQuery(connection, snowflakeAggQuery);
-
-  const aggData = snowflakeAggResults.map((row, i) =>
-    `Aggregated Result ${i + 1}:\n${Object.entries(row).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`
-  );
-
   const snowflakeRawQuery = buildSnowflakeQuery(interpretation, tableColumns, true);
   const snowflakeRawResults = await runSnowflakeQuery(connection, snowflakeRawQuery);
 
@@ -161,13 +184,12 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   );
 
   return {
-    combinedTextForSummary: [...aggData, ...pineconeData].join("\n\n"),
-    rawDataText: [...pineconeData, ...rawData].join("\n\n") || "No raw data available.",
-    sourceNote: aggData.length ? "" : "Note: results based on semantic search only.",
+    combinedTextForSummary: [aggTable, ...pineconeData].join("\n\n"),
+    rawDataText: [...pineconeData, ...rawData].join("\n\n"),
+    sourceNote: snowflakeAggResults.length ? "" : "Note: results based on semantic search only.",
   };
 }
 
-// HTTP POST Handler
 export async function POST(req: NextRequest) {
   let connection: any;
   try {
@@ -200,7 +222,7 @@ export async function POST(req: NextRequest) {
     );
 
     const summaryPrompt = `
-      You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2-3 sentences) that directly answers the query.
+      You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2–3 sentences) that directly answers the query.
 
       Aggregated Data:
       ${combinedTextForSummary}
