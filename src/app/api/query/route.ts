@@ -96,6 +96,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     topK: 3,
     includeMetadata: true,
   });
+  console.log("Pinecone matches:", pineconeResults.matches.length);
   const pineconeData = pineconeResults.matches.map((match, i) => {
     const metadata = match.metadata || {};
     return `Pinecone Result ${i + 1}:\n${Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`;
@@ -112,6 +113,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
       },
     });
   });
+  console.log("Snowflake rows returned:", snowflakeResults.length);
   const snowflakeData = snowflakeResults.map((row, i) =>
     `Snowflake Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
   );
@@ -122,6 +124,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     : pineconeData;
 
   const combinedText = combinedData.join("\n\n");
+  console.log("Combined Text:", combinedText);
 
   return {
     combinedText,
@@ -171,7 +174,9 @@ export async function POST(req: NextRequest) {
     });
 
     const summary = gptResponse.choices[0].message.content;
-    return NextResponse.json({ summary, rawData: combinedText }); // Include rawData
+    console.log("Summary:", summary);
+    console.log("Raw Data:", combinedText);
+    return NextResponse.json({ summary, rawData: combinedText });
   } catch (error) {
     console.error("Error:", error);
     return NextResponse.json({ message: "Error processing query", error: String(error) }, { status: 500 });
