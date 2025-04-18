@@ -5,20 +5,51 @@ import snowflake from "snowflake-sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
-const index = pc.Index(process.env.PINECONE_INDEX!);
+const index = pc.Index(process.env.PINECONE_INDEX! });
 
+// Expanded column mapping
 const columnMapping: { [key: string]: string } = {
-  "accounting period": "PER_END_DATE",
-  "vendor": "VENDORNAME",
-  "account name": "ACCTNAME",
-  "account code": "ACCT_ID",
-  "account id": "ACCT_ID",
-  "vendor id": "VENDOR_ID",
-  "vendor name": "VENDORNAME",
-  "account vendor": "VENDORNAME",
+  "utm id": "UTM_ID",
+  "gl identifier": "UTM_ID",
+  "co id": "CO_ID",
+  "company": "CO_ID",
+  "name": "NAME",
+  "company name": "NAME",
+  "wellcode": "WELLCODE",
+  "accountingid": "WELLCODE",
   "well code": "WELLCODE",
+  "cost center": "WELLCODE",
   "well name": "WELL_NAME",
-  "description": "DESCRIPTION"
+  "cost center name": "WELL_NAME",
+  "accounting period": "PER_END_DATE",
+  "month end": "PER_END_DATE",
+  "posting date": "POSTING_DATE",
+  "accounting date": "LOS_PRODUCTIONDATE",
+  "activity date": "LOS_PRODUCTIONDATE",
+  "excalibur module": "SYSTEM_CODE",
+  "document": "DOCUMENT",
+  "journal entry": "VOUCHER",
+  "description": "DESCRIPTION",
+  "annotation": "ANNOTATION",
+  "vendor": "VENDORNAME",
+  "vendor id": "VENDOR_ID",
+  "afe": "AFE_ID",
+  "afe name": "AFENAME",
+  "gas purchaser": "PURCH_ID",
+  "purchaser number": "PURCH_ID",
+  "purchaser": "PURCHNAME",
+  "gl account": "ACCT_ID",
+  "account number": "ACCT_ID",
+  "general ledger account": "ACCTNAME",
+  "account name": "ACCTNAME",
+  "mcf": "QUANTITY",
+  "volume": "QUANTITY",
+  "quantity": "QUANTITY",
+  "balance": "BALANCE",
+  "amount": "BALANCE",
+  "number": "BALANCE",
+  "modified by": "LAST_CHANGE_BY",
+  "created by": "CREATED_BY"
 };
 
 function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
@@ -82,8 +113,13 @@ async function interpretQuery(query: string): Promise<any> {
 
 function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw: boolean = false): string {
   const data_type = interpretation.data_type || "balances";
-  const group_by = (interpretation.group_by || [])
-    .map((term: string) => columnMapping[term.toLowerCase()] || term)
+  const rawGroupBy = interpretation.group_by || [];
+  const group_by = rawGroupBy
+    .map((term: string) => {
+      const mapped = columnMapping[term.toLowerCase()];
+      if (!mapped) console.warn(`⚠️ No mapping found for: '${term}'`);
+      return mapped || term;
+    })
     .filter((col: string) => tableColumns.includes(col));
 
   const filters = interpretation.filters || {};
@@ -108,6 +144,12 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
       .join(" AND ");
   }
 
+  const selectFields = group_by.length ? group_by.join(", ") + ", " : "";
+  const groupByClause = group_by.length ? `GROUP BY ${group_by.join(", ")}` : "";
+  const orderByClause = group_by.length ? `ORDER BY ${group_by.join(", ")}` : "";
+
+  const columnsForDisplay = group_by.length ? `\n/* Columns used in query: ${group_by.join(", ")} */` : "";
+
   if (isRaw) {
     return `
       SELECT *
@@ -117,10 +159,8 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
     `.trim();
   }
 
-  const selectFields = group_by.length ? group_by.join(", ") + ", " : "";
-  const groupByClause = group_by.length ? `GROUP BY ${group_by.join(", ")}` : "";
-  const orderByClause = group_by.length ? `ORDER BY ${group_by.join(", ")}` : "";
   return `
+    ${columnsForDisplay}
     SELECT ${selectFields}SUM(BALANCE) AS TOTAL
     FROM STICK_DB.FINANCIAL.S3_GL
     ${whereClause ? `WHERE ${whereClause}` : ""}
@@ -132,31 +172,14 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
 
 function formatResultsAsTable(rows: any[]): string {
   if (!rows.length) return "No results found.";
-
   const headers = Object.keys(rows[0]);
   const headerRow = `| ${headers.join(" | ")} |`;
   const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
-
-  const dataRows = rows.map((row) => {
-    return `| ${headers.map((key) => formatValue(row[key])).join(" | ")} |`;
-  });
-
+  const dataRows = rows.map((row) => `| ${headers.map((key) => `${row[key] ?? ""}`).join(" | ")} |`);
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
 
-function formatValue(value: any): string {
-  if (value instanceof Date) {
-    return new Date(value).toISOString().split("T")[0];
-  }
-  return `${value ?? ""}`;
-}
-
-async function fusionSmartRetrieval(
-  query: string,
-  interpretation: any,
-  tableColumns: string[],
-  connection: any
-): Promise<{ combinedTextForSummary: string; rawDataText: string; sourceNote: string }> {
+async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], connection: any): Promise<{ combinedTextForSummary: string; rawDataText: string; sourceNote: string }> {
   const isSummary = interpretation.mode === "summary";
 
   const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
@@ -191,10 +214,7 @@ async function fusionSmartRetrieval(
 
   const snowflakeRawQuery = buildSnowflakeQuery(interpretation, tableColumns, true);
   const snowflakeRawResults = await runSnowflakeQuery(connection, snowflakeRawQuery);
-
-  const rawData = snowflakeRawResults.map((row, i) =>
-    `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`
-  );
+  const rawData = snowflakeRawResults.map((row, i) => `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`);
 
   return {
     combinedTextForSummary: [aggTable, ...pineconeData].join("\n\n"),
@@ -227,12 +247,7 @@ export async function POST(req: NextRequest) {
     });
 
     const tableColumns = await getTableColumns(connection);
-    const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(
-      query,
-      interpretation,
-      tableColumns,
-      connection
-    );
+    const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, tableColumns, connection);
 
     const summaryPrompt = `
       You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2–3 sentences) that directly answers the query.
