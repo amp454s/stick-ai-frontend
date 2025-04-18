@@ -47,15 +47,9 @@ async function interpretQuery(query: string): Promise<any> {
   return JSON.parse(response.choices[0].message.content || "{}");
 }
 
-// Helper to build Snowflake query dynamically
-function buildSnowflakeQuery(interpretation: any, tableColumns: string[]): string {
-  const data_type = interpretation.data_type || "balances";
-  const group_by = Array.isArray(interpretation.group_by) ? interpretation.group_by.filter((col: string) => tableColumns.includes(col)) : [];
+// Helper to build Snowflake query dynamically for raw data
+function buildSnowflakeRawQuery(interpretation: any, tableColumns: string[]): string {
   const filters = interpretation.filters || {};
-
-  const selectFields = group_by.length > 0 ? group_by.join(", ") + ", " : "";
-  const aggregate = data_type === "expenses" ? "SUM(BALANCE)" : "BALANCE";
-
   let whereClause = "";
   if (filters && typeof filters === "object") {
     whereClause = Object.entries(filters)
@@ -69,15 +63,10 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[]): strin
       .join(" AND ");
   }
 
-  const groupByClause = group_by.length > 0 ? `GROUP BY ${group_by.join(", ")}` : "";
-  const orderByClause = group_by.length > 0 ? `ORDER BY ${group_by.join(", ")}` : "";
-
   return `
-    SELECT ${selectFields}${aggregate} as TOTAL
+    SELECT *
     FROM STICK_DB.FINANCIAL.S3_GL
     ${whereClause ? `WHERE ${whereClause}` : ""}
-    ${groupByClause}
-    ${orderByClause}
     LIMIT 100
   `.trim();
 }
@@ -102,29 +91,30 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     return `Pinecone Result ${i + 1}:\n${Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`;
   });
 
-  const snowflakeQuery = buildSnowflakeQuery(interpretation, tableColumns);
-  console.log("Snowflake Query:", snowflakeQuery);
-  const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
+  // Build and execute raw Snowflake query
+  const snowflakeRawQuery = buildSnowflakeRawQuery(interpretation, tableColumns);
+  console.log("Snowflake Raw Query:", snowflakeRawQuery);
+  const snowflakeRawResults = await new Promise<any[]>((resolve, reject) => {
     connection.execute({
-      sqlText: snowflakeQuery,
+      sqlText: snowflakeRawQuery,
       complete: (err: Error | null, stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows || []);
       },
     });
   });
-  console.log("Snowflake rows returned:", snowflakeResults.length);
-  const snowflakeData = snowflakeResults.map((row, i) =>
-    `Snowflake Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
+  console.log("Snowflake raw rows returned:", snowflakeRawResults.length);
+  const snowflakeRawData = snowflakeRawResults.map((row, i) =>
+    `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")}`
   );
 
-  const hasSnowflakeData = snowflakeData.length > 0;
+  const hasSnowflakeData = snowflakeRawData.length > 0;
   const combinedData = hasSnowflakeData
-    ? [...snowflakeData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])]
+    ? [...snowflakeRawData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])]
     : pineconeData;
 
   const combinedText = combinedData.join("\n\n");
-  console.log("Combined Text:", combinedText);
+  console.log("Combined Raw Text:", combinedText);
 
   return {
     combinedText,
