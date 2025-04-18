@@ -42,8 +42,7 @@ const columnMapping: { [key: string]: string } = {
   "created by": "CREATED_BY",
   "account id": "ACCT_ID",
   "vendor name": "VENDORNAME",
-  "invoice type": "DESCRIPTION",
-  "account code": "ACCT_ID"
+  "invoice type": "DESCRIPTION"
 };
 
 function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
