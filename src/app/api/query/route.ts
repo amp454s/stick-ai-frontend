@@ -3,28 +3,15 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import snowflake from "snowflake-sdk";
 
-
-// Suppressing deprecation warning for util._extend (NODE_OPTIONS=--no-deprecation)
 // Initialize clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
 
-// Initialize Snowflake connection
-const snowflakeConnection = snowflake.createConnection({
-  account: process.env.SNOWFLAKE_ACCOUNT!,
-  username: process.env.SNOWFLAKE_USER!,
-  password: process.env.SNOWFLAKE_PASSWORD!,
-  database: "STICK_DB",
-  schema: "FINANCIAL",
-  role: "STICK_ROLE",
-  warehouse: "STICK_WH",
-});
-
 // Helper to fetch column names from S3_GL table
-async function getTableColumns(): Promise<string[]> {
+async function getTableColumns(connection: any): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    snowflakeConnection.execute({
+    connection.execute({
       sqlText: `
         SELECT COLUMN_NAME
         FROM INFORMATION_SCHEMA.COLUMNS
@@ -50,30 +37,33 @@ async function interpretQuery(query: string): Promise<any> {
           Given a user's query, extract the following:
           - data_type: The type of financial data (e.g., expenses, balances).
           - group_by: An array of fields to group by (e.g., ["PER_END_DATE"]).
-          - filters: An object with fields and conditions (e.g., {"ACCTNAME": ["LIKE '%electric%'"]}).
-
-          Return the result as a JSON object.
+          - filters: An object with fields and conditions (e.g., {"ACCTNAME": ["LIKE", "%electric%"]}).
+          Return the result as a JSON object. If unsure, provide default values.
         `,
       },
       { role: "user", content: query },
     ],
   });
-
   return JSON.parse(response.choices[0].message.content || "{}");
 }
 
 // Helper to build Snowflake query dynamically
 function buildSnowflakeQuery(interpretation: any, tableColumns: string[]): string {
-  const { data_type, group_by, filters } = interpretation;
+  const data_type = interpretation.data_type || "balances";
+  const group_by = Array.isArray(interpretation.group_by) ? interpretation.group_by.filter(col => tableColumns.includes(col)) : [];
+  const filters = interpretation.filters || {};
 
   const selectFields = group_by.length > 0 ? group_by.join(", ") + ", " : "";
   const aggregate = data_type === "expenses" ? "SUM(BALANCE)" : "BALANCE";
 
   let whereClause = "";
-  if (filters) {
+  if (filters && typeof filters === "object") {
     whereClause = Object.entries(filters)
+      .filter(([field, condition]) => tableColumns.includes(field) && condition)
       .map(([field, condition]) => {
-        if (Array.isArray(condition)) return `${field} ${condition[0]} ${condition[1]}`;
+        if (Array.isArray(condition) && condition.length === 2) {
+          return `${field} ${condition[0]} '${condition[1]}'`;
+        }
         return `${field} = '${condition}'`;
       })
       .join(" AND ");
@@ -89,13 +79,12 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[]): strin
     ${groupByClause}
     ${orderByClause}
     LIMIT 100
-  `;
+  `.trim();
 }
 
 // Fusion Smart Retrieval Combiner
-async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[]) {
-  // Pinecone retrieval
-  const pineconeQuery = `${interpretation.data_type} ${query}`;
+async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], connection: any) {
+  const pineconeQuery = `${interpretation.data_type || "financial"} ${query}`;
   const embeddingResponse = await openai.embeddings.create({
     input: pineconeQuery,
     model: "text-embedding-3-small",
@@ -112,10 +101,10 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     return Object.entries(metadata).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n");
   });
 
-  // Snowflake retrieval
   const snowflakeQuery = buildSnowflakeQuery(interpretation, tableColumns);
+  console.log("Snowflake Query:", snowflakeQuery);
   const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
-    snowflakeConnection.execute({
+    connection.execute({
       sqlText: snowflakeQuery,
       complete: (err, stmt, rows) => {
         if (err) reject(err);
@@ -127,7 +116,6 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
     Object.entries(row).map(([key, value]) => `${key}: ${value || "n/a"}`).join("\n")
   );
 
-  // Fusion logic: Prioritize Snowflake, supplement with Pinecone
   const hasSnowflakeData = snowflakeData.length > 0;
   const combinedData = hasSnowflakeData
     ? [...snowflakeData, ...(pineconeData.length > 0 ? [`Additional Context (Semantic):\n${pineconeData.join("\n\n")}`] : [])]
@@ -140,25 +128,31 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
 }
 
 export async function POST(req: NextRequest) {
+  let connection: any;
   try {
     const { query } = await req.json();
     if (!query) throw new Error("Query is required");
 
-    // Interpret query
     const interpretation = await interpretQuery(query);
+    console.log("Interpretation:", interpretation);
 
-    // Connect to Snowflake
-    await new Promise((resolve, reject) => {
-      snowflakeConnection.connect((err, conn) => (err ? reject(err) : resolve(conn)));
+    connection = snowflake.createConnection({
+      account: process.env.SNOWFLAKE_ACCOUNT!,
+      username: process.env.SNOWFLAKE_USER!,
+      password: process.env.SNOWFLAKE_PASSWORD!,
+      database: "STICK_DB",
+      schema: "FINANCIAL",
+      role: "STICK_ROLE",
+      warehouse: "STICK_WH",
     });
 
-    // Fetch table columns
-    const tableColumns = await getTableColumns();
+    await new Promise((resolve, reject) => {
+      connection.connect((err: any, conn: any) => (err ? reject(err) : resolve(conn)));
+    });
 
-    // Fusion retrieval
-    const { combinedText, sourceNote } = await fusionSmartRetrieval(query, interpretation, tableColumns);
+    const tableColumns = await getTableColumns(connection);
+    const { combinedText, sourceNote } = await fusionSmartRetrieval(query, interpretation, tableColumns, connection);
 
-    // Generate sharp summary
     const summaryPrompt = `
       You are a financial assistant. Based on the user's query: '${query}', and the data below, provide a concise summary (2-3 sentences) that directly answers the query. Focus on key aspects like totals by period, vendor, or account, and avoid asking the user to interpret raw data. ${sourceNote}
 
@@ -175,12 +169,13 @@ export async function POST(req: NextRequest) {
     });
 
     const summary = gptResponse.choices[0].message.content;
-
     return NextResponse.json({ summary });
   } catch (error) {
     console.error("Error:", error);
     return NextResponse.json({ message: "Error processing query", error: String(error) }, { status: 500 });
   } finally {
-    snowflakeConnection.destroy((err) => err && console.error("Snowflake disconnect error:", err));
+    if (connection) {
+      connection.destroy((err: any) => err && console.error("Snowflake disconnect error:", err));
+    }
   }
 }
