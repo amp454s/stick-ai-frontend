@@ -60,13 +60,12 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
     .filter((col: string) => tableColumns.includes(col));
 
   const filters = interpretation.filters || {};
-  const resolvedFilters: { [key: string]: any } = Object.entries(filters).reduce((acc, [key, val]) => {
+  const resolvedFilters = Object.entries(filters).reduce((acc: Record<string, any>, [key, val]) => {
     const mapped = columnMapping[key.toLowerCase()] || key;
     if (tableColumns.includes(mapped)) acc[mapped] = val;
     return acc;
   }, {});
 
-  // Handle keyword
   let whereClause = "";
   if (filters.keyword) {
     const keyword = filters.keyword === "electricity" ? "electric" : filters.keyword;
