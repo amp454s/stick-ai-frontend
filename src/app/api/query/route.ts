@@ -50,7 +50,7 @@ async function interpretQuery(query: string): Promise<any> {
 // Helper to build Snowflake query dynamically
 function buildSnowflakeQuery(interpretation: any, tableColumns: string[]): string {
   const data_type = interpretation.data_type || "balances";
-  const group_by = Array.isArray(interpretation.group_by) ? interpretation.group_by.filter(col => tableColumns.includes(col)) : [];
+  const group_by = Array.isArray(interpretation.group_by) ? interpretation.group_by.filter((col: string) => tableColumns.includes(col)) : [];
   const filters = interpretation.filters || {};
 
   const selectFields = group_by.length > 0 ? group_by.join(", ") + ", " : "";
