@@ -24,6 +24,7 @@ const columnMapping: { [key: string]: string } = {
   "excalibur module": "SYSTEM_CODE",
   "journal entry": "VOUCHER",
   "vendor": "VENDORNAME",
+  "vendor name": "VENDORNAME",
   "afe": "AFE_ID",
   "gas purchaser": "PURCH_ID",
   "purchaser": "PURCHNAME",
@@ -31,29 +32,35 @@ const columnMapping: { [key: string]: string } = {
   "gl account": "ACCT_ID",
   "general ledger account": "ACCT_ID",
   "account number": "ACCT_ID",
-  "account name": "ACCTNAME",
+  "account id": "ACCT_ID",
   "account code": "ACCT_ID",
+  "account name": "ACCTNAME",
   "volume": "QUANTITY",
   "quantity": "QUANTITY",
   "mcf": "QUANTITY",
   "balance": "BALANCE",
   "modified by": "LAST_CHANGE_BY",
   "created by": "CREATED_BY",
-  "account id": "ACCT_ID",
-  "vendor name": "VENDORNAME",
   "invoice type": "DESCRIPTION"
 };
 
-function safeMapFields(input: any): string[] {
-  const values = Array.isArray(input) ? input : [input];
+function safeMapFields(terms: any, type: string): string[] {
+  if (!terms) return [];
+  const arr = Array.isArray(terms) ? terms : [terms];
   const mapped: string[] = [];
 
-  for (const v of values) {
-    if (typeof v === "string") {
-      const key = v.toLowerCase().trim();
-      mapped.push(columnMapping[key] || key);
+  arr.forEach((term) => {
+    if (typeof term === "string") {
+      const key = term.toLowerCase().trim();
+      const mappedValue = columnMapping[key];
+      if (mappedValue) {
+        mapped.push(mappedValue);
+      } else {
+        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}'`);
+      }
     }
-  }
+  });
+
   return mapped;
 }
 
@@ -67,12 +74,10 @@ function formatResultsAsTable(rows: any[]): string {
   const headers = Object.keys(rows[0]);
   const headerRow = `| ${headers.join(" | ")} |`;
   const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
-  const dataRows = rows.map((row) => {
-    return `| ${headers.map((key) => {
-      const val = row[key];
-      return val instanceof Date || key.toLowerCase().includes("date") ? formatDate(val) : val ?? "";
-    }).join(" | ")} |`;
-  });
+  const dataRows = rows.map((row) => `| ${headers.map((key) => {
+    const val = row[key];
+    return val instanceof Date || key.toLowerCase().includes("date") ? formatDate(val) : val ?? "";
+  }).join(" | ")} |`);
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
 
@@ -95,11 +100,11 @@ Return a valid JSON object.`,
 
   const content = response.choices[0].message.content || "";
   console.log("Raw GPT interpretation output:", content);
-
   const parsed = JSON.parse(content);
+
   return {
     ...parsed,
-    group_by: safeMapFields(parsed.group_by),
+    group_by: safeMapFields(parsed.group_by, "group_by"),
     filters: parsed.filters || {},
   };
 }
@@ -107,18 +112,20 @@ Return a valid JSON object.`,
 function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = false): string {
   const groupBy = (interpretation.group_by || []).filter((col: string) => columns.includes(col));
   const filters = interpretation.filters || {};
-  const keyword = filters.keyword || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "string") : "");
-  const excludeFilters = filters.exclude || {};
 
+  let keyword = filters.keyword || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "string") : "");
+  if (Array.isArray(keyword)) keyword = keyword[0];
+
+  const excludeFilters = filters.exclude || {};
   const excludeClauses = Object.entries(excludeFilters).map(([k, v]) => {
-    const col = columnMapping[k.toLowerCase()] || k;
-    return `${col} != '${v}'`;
+    const field = columnMapping[k.toLowerCase()] || k;
+    return Array.isArray(v) ? v.map(val => `${field} != '${val}'`).join(" AND ") : `${field} != '${v}'`;
   });
 
   let whereClause = "";
-  if (keyword) {
+  if (keyword && typeof keyword === "string") {
     const k = keyword.toLowerCase();
-    whereClause = `(ACCTNAME ILIKE '%${k}%' OR DESCRIPTION ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`;
+    whereClause = `(DESCRIPTION ILIKE '%${k}%' OR VENDORNAME ILIKE '%${k}%' OR ACCTNAME ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`;
   }
   if (excludeClauses.length) {
     whereClause += (whereClause ? " AND " : "") + excludeClauses.join(" AND ");
@@ -188,7 +195,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err: any) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -210,6 +217,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err: any) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
   }
 }
