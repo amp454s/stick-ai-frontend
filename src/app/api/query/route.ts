@@ -11,6 +11,14 @@ const columnMapping: { [key: string]: string } = {
   "accounting period": "PER_END_DATE",
   "vendor": "VENDORNAME",
   "account name": "ACCTNAME",
+  "account code": "ACCT_ID",
+  "account id": "ACCT_ID",
+  "vendor id": "VENDOR_ID",
+  "vendor name": "VENDORNAME",
+  "account vendor": "VENDORNAME",
+  "well code": "WELLCODE",
+  "well name": "WELL_NAME",
+  "description": "DESCRIPTION"
 };
 
 function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
@@ -112,7 +120,6 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
   const selectFields = group_by.length ? group_by.join(", ") + ", " : "";
   const groupByClause = group_by.length ? `GROUP BY ${group_by.join(", ")}` : "";
   const orderByClause = group_by.length ? `ORDER BY ${group_by.join(", ")}` : "";
-
   return `
     SELECT ${selectFields}SUM(BALANCE) AS TOTAL
     FROM STICK_DB.FINANCIAL.S3_GL
@@ -131,22 +138,25 @@ function formatResultsAsTable(rows: any[]): string {
   const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
 
   const dataRows = rows.map((row) => {
-    return `| ${headers
-      .map((key) => {
-        const value = row[key];
-        if (value instanceof Date || (typeof value === "string" && /GMT/.test(value))) {
-          const d = new Date(value);
-          return isNaN(d.getTime()) ? value : d.toISOString().split("T")[0];
-        }
-        return `${value ?? ""}`;
-      })
-      .join(" | ")} |`;
+    return `| ${headers.map((key) => formatValue(row[key])).join(" | ")} |`;
   });
 
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
 
-async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], connection: any) {
+function formatValue(value: any): string {
+  if (value instanceof Date) {
+    return new Date(value).toISOString().split("T")[0];
+  }
+  return `${value ?? ""}`;
+}
+
+async function fusionSmartRetrieval(
+  query: string,
+  interpretation: any,
+  tableColumns: string[],
+  connection: any
+): Promise<{ combinedTextForSummary: string; rawDataText: string; sourceNote: string }> {
   const isSummary = interpretation.mode === "summary";
 
   const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
