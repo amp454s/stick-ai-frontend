@@ -200,8 +200,8 @@ export async function POST(req: NextRequest) {
     const summaryPrompt = `
 You are reviewing accounting data based on this query: '${query}'.
 
-The following data includes matches from Pinecone (semantic search) and Snowflake (structured data).
-Write a very short summary (2–3 sentences max). Summarize only electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (PER_END_DATE) when requested, providing total BALANCE per period. Ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
+The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && snowflakeData[0].startsWith("Snowflake query failed") ? "" : " and Snowflake (structured data)"}.
+Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (PER_END_DATE) when requested, providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
 
 ${combinedData}
     `.trim();
