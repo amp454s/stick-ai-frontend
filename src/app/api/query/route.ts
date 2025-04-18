@@ -23,7 +23,7 @@ async function getTableColumns(connection: any): Promise<string[]> {
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'
       `,
-      complete: (err, _stmt, rows) => {
+      complete: (err: Error | null, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows.map((row: any) => row.COLUMN_NAME));
       },
@@ -130,7 +130,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   const snowflakeAggResults = await new Promise<any[]>((resolve, reject) => {
     connection.execute({
       sqlText: snowflakeAggQuery,
-      complete: (err, _stmt, rows) => {
+      complete: (err: Error | null, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows || []);
       },
@@ -147,7 +147,7 @@ async function fusionSmartRetrieval(query: string, interpretation: any, tableCol
   const snowflakeRawResults = await new Promise<any[]>((resolve, reject) => {
     connection.execute({
       sqlText: snowflakeRawQuery,
-      complete: (err, _stmt, rows) => {
+      complete: (err: Error | null, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows || []);
       },
