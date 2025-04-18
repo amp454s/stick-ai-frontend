@@ -5,7 +5,7 @@ import snowflake from "snowflake-sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
-const index = pc.Index(process.env.PINECONE_INDEX! });
+const index = pc.Index(process.env.PINECONE_INDEX! );
 
 // Expanded column mapping
 const columnMapping: { [key: string]: string } = {
