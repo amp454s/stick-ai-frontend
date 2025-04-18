@@ -92,7 +92,7 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
   let whereClause = "";
   if (filters.keyword) {
     const keyword = filters.keyword === "electricity" ? "electric" : filters.keyword;
-    whereClause = `(ACCTNAME LIKE '%${keyword}%' OR DESCRIPTION LIKE '%${keyword}%' OR ANNOTATION LIKE '%${keyword}%')`;
+    whereClause = `(ACCTNAME ILIKE '%${keyword}%' OR DESCRIPTION ILIKE '%${keyword}%' OR ANNOTATION ILIKE '%${keyword}%')`;
   } else if (Object.keys(resolvedFilters).length) {
     whereClause = Object.entries(resolvedFilters)
       .map(([field, condition]) => {
