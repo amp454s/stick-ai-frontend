@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err: unknown) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const interpretation = await interpretQuery(query, columns);
     console.log("Interpretation:", interpretation);
