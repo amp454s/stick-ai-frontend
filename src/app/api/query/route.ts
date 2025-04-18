@@ -57,7 +57,7 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw:
   const data_type = interpretation.data_type || "balances";
   const group_by = (interpretation.group_by || [])
     .map((term: string) => columnMapping[term.toLowerCase()] || term)
-    .filter((col) => tableColumns.includes(col));
+    .filter((col: string) => tableColumns.includes(col));
 
   const filters = interpretation.filters || {};
   const resolvedFilters: { [key: string]: any } = Object.entries(filters).reduce((acc, [key, val]) => {
