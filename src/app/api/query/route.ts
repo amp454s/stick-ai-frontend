@@ -7,7 +7,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
 
-// Expanded column mapping
 const columnMapping: { [key: string]: string } = {
   "gl identifier": "UTM_ID",
   "company": "CO_ID",
@@ -47,11 +46,22 @@ const columnMapping: { [key: string]: string } = {
 function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
   if (!terms) return [];
   const arr = Array.isArray(terms) ? terms : [terms];
-  const mapped = arr.map((term) => {
+  const mapped: string[] = [];
+  const unmapped: string[] = [];
+
+  for (const term of arr) {
     const key = term.toLowerCase().trim();
-    return columnMapping[key] || key;
-  });
+    if (columnMapping[key]) {
+      mapped.push(columnMapping[key]);
+    } else {
+      unmapped.push(term);
+      mapped.push(key); // fallback
+    }
+  }
+
   console.log(`${type === "group_by" ? "📊" : type === "filters" ? "✅" : "🚫"} Mapped ${type} fields:`, mapped);
+  if (unmapped.length) console.warn(`⚠️ Unmapped ${type} fields:`, unmapped);
+
   return mapped;
 }
 
@@ -85,7 +95,7 @@ async function interpretQuery(query: string): Promise<any> {
 - group_by: array of human-readable field names
 - filters: keyword-based or explicit column filters (can include exclude subobject)
 - mode: 'summary' or 'search'
-Return a valid JSON object.`
+Return a valid JSON object.`,
       },
       { role: "user", content: query },
     ],
@@ -139,7 +149,7 @@ function runSnowflakeQuery(conn: any, sqlText: string): Promise<any[]> {
     console.log("Executing query:\n", sqlText);
     conn.execute({
       sqlText,
-      complete: (err: Error | null, _stmt: any, rows: any[]) => {
+      complete: (err: any, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows);
       },
@@ -187,7 +197,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err: Error | null) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err: any) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -209,6 +219,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err: Error | null) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err: any) => err && console.error("Disconnect error:", err));
   }
 }
