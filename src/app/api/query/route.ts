@@ -20,55 +20,15 @@ const snowflakeConnection = snowflake.createConnection({
   warehouse: "STICK_WH",
 });
 
-// Helper to fetch column names from S3_GL table
-async function getTableColumns(): Promise<string[]> {
-  return new Promise((resolve, reject) => {
-    snowflakeConnection.execute({
-      sqlText: `
-        SELECT COLUMN_NAME
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'
-      `,
-      complete: (err, stmt, rows) => {
-        if (err) reject(err);
-        else resolve((rows || []).map(row => row.COLUMN_NAME));
-      },
-    });
-  });
-}
-
-// Mapping of common terms to column names
-const columnMapping: { [key: string]: string } = {
-  "accounting period": "PER_END_DATE",
-  "period": "PER_END_DATE",
-  "vendor": "VENDORNAME",
-  "account name": "ACCTNAME",
-  "account": "ACCT_ID",
-  "date": "POSTING_DATE",
-  "well": "WELL_NAME",
-  "company": "NAME",
-};
-
-// Helper to map query terms to column names
-function mapQueryTermToColumn(term: string, columns: string[]): string {
-  term = term.toLowerCase().trim();
-  if (columnMapping[term]) return columnMapping[term];
-  const column = columns.find(col => col.toLowerCase() === term);
-  if (column) return column;
-  const guessedColumn = term.replace(/\s+/g, "_").toUpperCase();
-  return columns.includes(guessedColumn) ? guessedColumn : "";
-}
-
 export async function POST(req: NextRequest) {
   try {
     const { query } = await req.json();
-
     if (!query) {
       return NextResponse.json({ message: "Query is required" }, { status: 400 });
     }
 
-    // Refine query input for Pinecone
-    const refinedQuery = `electrical expenses ${query}`;
+    // Refine query for Pinecone
+    const refinedQuery = `electrical expenses by accounting period ${query}`;
     const embeddingResponse = await openai.embeddings.create({
       input: refinedQuery,
       model: "text-embedding-3-small",
@@ -78,7 +38,6 @@ export async function POST(req: NextRequest) {
     // Query Pinecone
     const namespaces = ["default"];
     const topK = 10;
-
     const pineconeResults = await Promise.all(
       namespaces.map(async (namespace) => {
         const result = await index.namespace(namespace).query({
@@ -89,12 +48,10 @@ export async function POST(req: NextRequest) {
         return result.matches;
       })
     );
-
     const combinedPineconeResults = pineconeResults
       .flat()
       .sort((a, b) => (b.score || 0) - (a.score || 0))
       .slice(0, 3);
-
     const pineconeData = combinedPineconeResults.map((match) => {
       const metadata = match.metadata || {};
       return Object.entries(metadata)
@@ -104,6 +61,7 @@ export async function POST(req: NextRequest) {
 
     // Connect to Snowflake
     console.log("Attempting Snowflake connection...");
+    let snowflakeData: string[] = [];
     try {
       await new Promise((resolve, reject) => {
         snowflakeConnection.connect((err, conn) => {
@@ -114,87 +72,44 @@ export async function POST(req: NextRequest) {
       console.log("Snowflake connection established.");
     } catch (error) {
       console.error("Snowflake connection failed:", error);
-      throw new Error("Failed to connect to Snowflake: " + String(error));
+      snowflakeData = ["Snowflake connection failed: " + String(error)];
     }
 
-    // Fetch column names from S3_GL
-    let tableColumns: string[] = [];
-    try {
-      tableColumns = await getTableColumns();
-      console.log("Fetched table columns:", tableColumns);
-    } catch (error) {
-      console.error("Failed to fetch table columns:", error);
-    }
-
-    // Parse query for aggregation
-    const queryLower = query.toLowerCase();
-    const needsAggregation =
-      queryLower.includes("summarize") ||
-      queryLower.includes("total") ||
-      queryLower.includes("by");
-
-    let snowflakeQuery;
-    let snowflakeData: string[] = [];
-    if (needsAggregation) {
-      const byMatch = queryLower.match(/by\s+(.+)/);
-      const groupByFields: string[] = [];
-
-      if (byMatch) {
-        const byClause = byMatch[1];
-        const terms = byClause.split(/and|,/).map((term: string) => term.trim());
-        for (const term of terms) {
-          const column = mapQueryTermToColumn(term, tableColumns);
-          if (column && !groupByFields.includes(column)) {
-            groupByFields.push(column);
-          }
-        }
-      }
-
-      const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
-      const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-      snowflakeQuery = `
-        SELECT ${groupByFields.join(", ")}${groupByFields.length > 0 ? ", " : ""}SUM(BALANCE) as TOTAL_BALANCE
+    // Execute Snowflake query if connected
+    if (snowflakeData.length === 0) {
+      const snowflakeQuery = `
+        SELECT PER_END_DATE, SUM(BALANCE) as TOTAL_BALANCE
         FROM S3_GL
         WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
-        ${groupByClause}
-        ${orderByClause}
-      `;
-    } else {
-      snowflakeQuery = `
-        SELECT *
-        FROM S3_GL
-        WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
+        GROUP BY PER_END_DATE
+        ORDER BY PER_END_DATE
         LIMIT 10
       `;
-    }
-
-    console.log("Executing Snowflake Query:", snowflakeQuery);
-
-    try {
-      const snowflakeStartTime = Date.now();
-      const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
-        snowflakeConnection.execute({
-          sqlText: snowflakeQuery,
-          complete: (err, stmt, rows) => {
-            if (err) reject(err);
-            else resolve(rows || []);
-          },
+      console.log("Executing Snowflake Query:", snowflakeQuery);
+      try {
+        const snowflakeStartTime = Date.now();
+        const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
+          snowflakeConnection.execute({
+            sqlText: snowflakeQuery,
+            complete: (err, stmt, rows) => {
+              if (err) reject(err);
+              else resolve(rows || []);
+            },
+          });
         });
-      });
-      console.log("Snowflake Query Time:", Date.now() - snowflakeStartTime, "ms");
-
-      snowflakeData = snowflakeResults.map((row) =>
-        Object.entries(row)
-          .map(([key, value]) => `${key}: ${value || "n/a"}`)
-          .join("\n")
-      );
-      console.log("Snowflake Results:", snowflakeData);
-    } catch (error) {
-      console.error("Snowflake query failed, proceeding with Pinecone data:", error);
-      snowflakeData = ["Snowflake query failed: " + String(error)];
+        console.log("Snowflake Query Time:", Date.now() - snowflakeStartTime, "ms");
+        snowflakeData = snowflakeResults.map((row) =>
+          Object.entries(row)
+            .map(([key, value]) => `${key}: ${value || "n/a"}`)
+            .join("\n")
+        );
+      } catch (error) {
+        console.error("Snowflake query failed:", error);
+        snowflakeData = ["Snowflake query failed: " + String(error)];
+      }
     }
 
-    // Combine Pinecone and Snowflake data
+    // Combine data
     const combinedData = [
       ...pineconeData.map((data, i) => `Pinecone Result ${i + 1}:\n${data}`),
       ...snowflakeData.map((data, i) => `Snowflake Result ${i + 1}:\n${data}`),
@@ -202,13 +117,19 @@ export async function POST(req: NextRequest) {
 
     console.log("Combined Data for Query:", combinedData);
 
+    // Handle no data case
+    if (pineconeData.length === 0 && snowflakeData.length === 0) {
+      return NextResponse.json({
+        summary: "No matching data found for the query.",
+        rawData: "No data available.",
+      });
+    }
+
     // Generate GPT summary
     const summaryPrompt = `
 You are reviewing accounting data based on this query: '${query}'.
-
-The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && !snowflakeData[0].startsWith("Snowflake query failed") ? " and Snowflake (structured data)" : ""}.
-Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (PER_END_DATE) when requested, providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
-
+The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && !snowflakeData[0].startsWith("Snowflake") ? " and Snowflake (structured data)" : ""}.
+Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize only electrical expenses by accounting period (PER_END_DATE), providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
 ${combinedData}
     `.trim();
 
@@ -217,8 +138,7 @@ ${combinedData}
       messages: [
         {
           role: "system",
-          content:
-            "You are a CPA assistant. Your job is to explain key accounting search results clearly, briefly, and professionally.",
+          content: "You are a CPA assistant. Your job is to explain key accounting search results clearly, briefly, and professionally.",
         },
         { role: "user", content: summaryPrompt },
       ],
