@@ -136,7 +136,11 @@ export async function POST(req: NextRequest) {
 
       const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
       const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-      const whereClauses = tableColumns.map(col => `${col} LIKE '%${query}%'`).join(" OR ");
+      const whereClauses = [
+        "ACCTNAME LIKE '%${query}%'",
+        "VENDORNAME LIKE '%${query}%'",
+        "DESCRIPTION LIKE '%${query}%'",
+      ].join(" OR ");
 
       snowflakeQuery = `
         SELECT ${groupByFields.join(", ")}${groupByFields.length > 0 ? ", " : ""}SUM(BALANCE) as TOTAL_BALANCE
@@ -146,7 +150,11 @@ export async function POST(req: NextRequest) {
         ${orderByClause}
       `;
     } else {
-      const whereClauses = tableColumns.map(col => `${col} LIKE '%${query}%'`).join(" OR ");
+      const whereClauses = [
+        "ACCTNAME LIKE '%${query}%'",
+        "VENDORNAME LIKE '%${query}%'",
+        "DESCRIPTION LIKE '%${query}%'",
+      ].join(" OR ");
 
       snowflakeQuery = `
         SELECT *
