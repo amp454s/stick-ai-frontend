@@ -143,7 +143,7 @@ function runSnowflakeQuery(conn: any, sqlText: string): Promise<any[]> {
     console.log("Executing query:\n", sqlText);
     conn.execute({
       sqlText,
-      complete: (err: any, _stmt: any, rows: any[]) => {
+      complete: (err: unknown, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows);
       },
@@ -232,6 +232,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err: unknown) => err && console.error("Disconnect error:", err));
   }
 }
