@@ -139,14 +139,14 @@ function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = fal
 function runSnowflakeQuery(conn: any, sqlText: string): Promise<any[]> {
   return new Promise((resolve, reject) => {
     console.log("Executing query:\n", sqlText);
-    conn.execute({
-      sqlText,
-      complete: (err, _stmt, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      },
-    });
-  });
+   conn.execute({
+  sqlText,
+  complete: (err: Error | null, _stmt: any, rows: any[]) => {
+    if (err) reject(err);
+    else resolve(rows);
+  },
+});
+
 }
 
 async function getTableColumns(conn: any): Promise<string[]> {
