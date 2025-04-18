@@ -5,7 +5,7 @@ import snowflake from "snowflake-sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
-const index = pc.Index(process.env.PINECONE_INDEX! });
+const index = pc.Index(process.env.PINECONE_INDEX!);
 
 const columnMapping: { [key: string]: string } = {
   "gl identifier": "UTM_ID",
@@ -44,26 +44,16 @@ const columnMapping: { [key: string]: string } = {
   "invoice type": "DESCRIPTION"
 };
 
-function mapFields(terms: any, type: "group_by" | "filters" | "exclude" | "include") {
-  if (!terms) return [];
-  const arr = Array.isArray(terms) ? terms : [terms];
+function safeMapFields(input: any): string[] {
+  const values = Array.isArray(input) ? input : [input];
   const mapped: string[] = [];
-  const unmapped: string[] = [];
 
-  arr.forEach((term) => {
-    if (typeof term !== "string") return;
-    const key = term.toLowerCase().trim();
-    if (columnMapping[key]) {
-      mapped.push(columnMapping[key]);
-    } else {
-      mapped.push(key); // fallback
-      unmapped.push(term);
+  for (const v of values) {
+    if (typeof v === "string") {
+      const key = v.toLowerCase().trim();
+      mapped.push(columnMapping[key] || key);
     }
-  });
-
-  console.log(`${type === "group_by" ? "📊" : type === "filters" ? "✅" : "🚫"} Mapped ${type} fields:`, mapped);
-  if (unmapped.length) console.warn(`⚠️ Unmapped ${type} fields:`, unmapped);
-
+  }
   return mapped;
 }
 
@@ -78,12 +68,10 @@ function formatResultsAsTable(rows: any[]): string {
   const headerRow = `| ${headers.join(" | ")} |`;
   const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
   const dataRows = rows.map((row) => {
-    return `| ${headers
-      .map((key) => {
-        const val = row[key];
-        return val instanceof Date || key.toLowerCase().includes("date") ? formatDate(val) : val ?? "";
-      })
-      .join(" | ")} |`;
+    return `| ${headers.map((key) => {
+      const val = row[key];
+      return val instanceof Date || key.toLowerCase().includes("date") ? formatDate(val) : val ?? "";
+    }).join(" | ")} |`;
   });
   return [headerRow, separatorRow, ...dataRows].join("\n");
 }
@@ -97,7 +85,7 @@ async function interpretQuery(query: string): Promise<any> {
         content: `You are an expert in interpreting financial queries. Given a user's query, extract:
 - data_type: 'expenses', 'balances', etc.
 - group_by: array of human-readable field names
-- filters: keyword-based or explicit column filters (can include exclude/include subobject)
+- filters: keyword-based or explicit column filters (can include exclude subobject)
 - mode: 'summary' or 'search'
 Return a valid JSON object.`,
       },
@@ -111,10 +99,8 @@ Return a valid JSON object.`,
   const parsed = JSON.parse(content);
   return {
     ...parsed,
-    group_by: mapFields(parsed.group_by, "group_by"),
-    filters: parsed.filters,
-    exclude: parsed.filters?.exclude ? mapFields(parsed.filters.exclude, "exclude") : [],
-    include: parsed.filters?.include ? mapFields(parsed.filters.include, "include") : [],
+    group_by: safeMapFields(parsed.group_by),
+    filters: parsed.filters || {},
   };
 }
 
@@ -122,8 +108,12 @@ function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = fal
   const groupBy = (interpretation.group_by || []).filter((col: string) => columns.includes(col));
   const filters = interpretation.filters || {};
   const keyword = filters.keyword || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "string") : "");
-  const excludeFilters = filters.exclude || (Array.isArray(filters) ? filters.find((f: any) => typeof f === "object" && f.exclude) : {});
-  const excludeClauses = Object.entries(excludeFilters || {}).map(([k, v]) => `${columnMapping[k.toLowerCase()] || k} != '${v}'`);
+  const excludeFilters = filters.exclude || {};
+
+  const excludeClauses = Object.entries(excludeFilters).map(([k, v]) => {
+    const col = columnMapping[k.toLowerCase()] || k;
+    return `${col} != '${v}'`;
+  });
 
   let whereClause = "";
   if (keyword) {
