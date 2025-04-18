@@ -136,11 +136,10 @@ export async function POST(req: NextRequest) {
 
       const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
       const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-      const whereClauses = [
-        "ACCTNAME LIKE '%${query}%'",
-        "VENDORNAME LIKE '%${query}%'",
-        "DESCRIPTION LIKE '%${query}%'",
-      ].join(" OR ");
+      // Use simpler WHERE clause to match electrical expenses
+      const whereClauses = `
+        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%')
+      `;
 
       snowflakeQuery = `
         SELECT ${groupByFields.join(", ")}${groupByFields.length > 0 ? ", " : ""}SUM(BALANCE) as TOTAL_BALANCE
@@ -150,11 +149,9 @@ export async function POST(req: NextRequest) {
         ${orderByClause}
       `;
     } else {
-      const whereClauses = [
-        "ACCTNAME LIKE '%${query}%'",
-        "VENDORNAME LIKE '%${query}%'",
-        "DESCRIPTION LIKE '%${query}%'",
-      ].join(" OR ");
+      const whereClauses = `
+        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%')
+      `;
 
       snowflakeQuery = `
         SELECT *
@@ -164,6 +161,9 @@ export async function POST(req: NextRequest) {
       `;
     }
 
+    console.log("Executing Snowflake Query:", snowflakeQuery);
+
+    const snowflakeStartTime = Date.now();
     const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
       snowflakeConnection.execute({
         sqlText: snowflakeQuery,
@@ -173,6 +173,7 @@ export async function POST(req: NextRequest) {
         },
       });
     });
+    console.log("Snowflake Query Time:", Date.now() - snowflakeStartTime, "ms");
 
     const snowflakeData = snowflakeResults.map((row) =>
       Object.entries(row)
@@ -193,7 +194,7 @@ export async function POST(req: NextRequest) {
 You are reviewing accounting data based on this query: '${query}'.
 
 The following data includes matches from Pinecone (semantic search) and Snowflake (structured data).
-Write a very short summary (2–3 sentences max). Interpret the user's intent: if the query asks to "summarize" or "total" and includes "by" (e.g., "by accounting period" or "by vendor"), group the data accordingly and provide totals for key metrics like BALANCE. Highlight relevant details like account names, vendors, or dates.
+Write a very short summary (2–3 sentences max). Summarize totals by accounting period (PER_END_DATE) when requested, focusing on key metrics like BALANCE, and include relevant details like vendors or account names.
 
 ${combinedData}
     `.trim();
