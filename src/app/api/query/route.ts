@@ -7,9 +7,8 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 const index = pc.Index(process.env.PINECONE_INDEX!);
 
-// Expanded column mapping
+// Expanded column mapping with synonyms
 const columnMapping: { [key: string]: string } = {
-  // Direct mappings and synonyms
   "gl identifier": "UTM_ID",
   "company": "CO_ID",
   "company name": "NAME",
@@ -35,20 +34,17 @@ const columnMapping: { [key: string]: string } = {
   "general ledger account": "ACCT_ID",
   "account number": "ACCT_ID",
   "account name": "ACCTNAME",
-  "volume": "QUANTITY",
+  "account code": "ACCT_ID",
   "mcf": "QUANTITY",
+  "volume": "QUANTITY",
   "quantity": "QUANTITY",
-  "balance": "BALANCE",
   "modified by": "LAST_CHANGE_BY",
-  "created by": "CREATED_BY",
-  "description": "DESCRIPTION",
-  "annotation": "ANNOTATION",
-  "document": "DOCUMENT"
+  "created by": "CREATED_BY"
 };
 
 function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
-  console.log("Running SQL:\n" + sqlText);
   return new Promise((resolve, reject) => {
+    console.log("Executing query:\n", sqlText);
     connection.execute({
       sqlText,
       complete: (err: Error | null, _stmt: any, rows: any[]) => {
@@ -56,6 +52,7 @@ function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
           console.error("Snowflake query error:", err);
           reject(err);
         } else {
+          console.log(`Query successful. Rows returned: ${rows.length}`);
           resolve(rows || []);
         }
       },
@@ -64,11 +61,14 @@ function runSnowflakeQuery(connection: any, sqlText: string): Promise<any[]> {
 }
 
 async function getTableColumns(connection: any): Promise<string[]> {
-  const rows = await runSnowflakeQuery(
+  return runSnowflakeQuery(
     connection,
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'`
-  );
-  return rows.map((row: any) => row.COLUMN_NAME);
+    `
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'S3_GL' AND TABLE_SCHEMA = 'FINANCIAL'
+  `
+  ).then((rows) => rows.map((row: any) => row.COLUMN_NAME));
 }
 
 async function interpretQuery(query: string): Promise<any> {
@@ -101,17 +101,37 @@ async function interpretQuery(query: string): Promise<any> {
   }
 }
 
-function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw = false): string {
-  const group_by_raw = interpretation.group_by || [];
+function formatResultsAsTable(rows: any[]): string {
+  if (!rows.length) return "No results found.";
+
+  const headers = Object.keys(rows[0]);
+  const headerRow = `| ${headers.join(" | ")} |`;
+  const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
+
+  const dataRows = rows.map((row) => {
+    return `| ${headers.map((key) => {
+      const val = row[key];
+      if (val instanceof Date) {
+        return `${val.getMonth() + 1}/${val.getDate()}/${val.getFullYear()}`;
+      }
+      return `${val ?? ""}`;
+    }).join(" | ")} |`;
+  });
+
+  return [headerRow, separatorRow, ...dataRows].join("\n");
+}
+
+function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw: boolean = false): string {
+  const data_type = interpretation.data_type || "balances";
+  const group_by = (interpretation.group_by || [])
+    .map((term: string) => {
+      const col = columnMapping[term.toLowerCase()] || term;
+      if (!tableColumns.includes(col)) console.warn("[WARN] Unmapped or unused group_by column:", col);
+      return col;
+    })
+    .filter((col: string) => tableColumns.includes(col));
+
   const filters = interpretation.filters || {};
-
-  const group_by: string[] = group_by_raw.map((term: string) => {
-    const lower = term.toLowerCase();
-    const mapped = columnMapping[lower];
-    if (!mapped) console.warn(`⚠️  Unknown mapping for group_by term: '${term}'`);
-    return mapped || term;
-  }).filter((col: string) => tableColumns.includes(col));
-
   const resolvedFilters = Object.entries(filters).reduce((acc: Record<string, any>, [key, val]) => {
     const mapped = columnMapping[key.toLowerCase()] || key;
     if (tableColumns.includes(mapped)) acc[mapped] = val;
@@ -120,8 +140,8 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw 
 
   let whereClause = "";
   if (filters.keyword) {
-    const keyword = filters.keyword.toLowerCase();
-    whereClause = `(DESCRIPTION ILIKE '%${keyword}%' OR ANNOTATION ILIKE '%${keyword}%' OR DOCUMENT ILIKE '%${keyword}%')`;
+    const keyword = filters.keyword === "electricity" ? "electric" : filters.keyword;
+    whereClause = `(ACCTNAME ILIKE '%${keyword}%' OR DESCRIPTION ILIKE '%${keyword}%' OR ANNOTATION ILIKE '%${keyword}%')`;
   } else if (Object.keys(resolvedFilters).length) {
     whereClause = Object.entries(resolvedFilters)
       .map(([field, condition]) => {
@@ -133,20 +153,77 @@ function buildSnowflakeQuery(interpretation: any, tableColumns: string[], isRaw 
       .join(" AND ");
   }
 
-  const selectAllFields = isRaw ? "*" : `${group_by.join(", ")}${group_by.length ? ", " : ""}SUM(BALANCE) AS TOTAL`;
-  const groupByClause = isRaw || !group_by.length ? "" : `GROUP BY ${group_by.join(", ")}`;
-  const orderByClause = isRaw || !group_by.length ? "" : `ORDER BY ${group_by.join(", ")}`;
+  if (isRaw) {
+    return `
+      SELECT *
+      FROM STICK_DB.FINANCIAL.S3_GL
+      ${whereClause ? `WHERE ${whereClause}` : ""}
+      LIMIT 100
+    `.trim();
+  }
 
-  return `/* Columns used in query: ${group_by.join(", ")} */\nSELECT ${selectAllFields}\nFROM STICK_DB.FINANCIAL.S3_GL\n${whereClause ? `WHERE ${whereClause}` : ""}\n${groupByClause}\n${orderByClause}\nLIMIT 100`;
+  const selectFields = group_by.length ? group_by.join(", ") + ", " : "";
+  const groupByClause = group_by.length ? `GROUP BY ${group_by.join(", ")}` : "";
+  const orderByClause = group_by.length ? `ORDER BY ${group_by.join(", ")}` : "";
+  return `
+    SELECT ${selectFields}SUM(BALANCE) AS TOTAL
+    FROM STICK_DB.FINANCIAL.S3_GL
+    ${whereClause ? `WHERE ${whereClause}` : ""}
+    ${groupByClause}
+    ${orderByClause}
+    LIMIT 100
+  `.trim();
 }
 
-function formatResultsAsTable(rows: any[]): string {
-  if (!rows.length) return "No results found.";
-  const headers = Object.keys(rows[0]);
-  const headerRow = `| ${headers.join(" | ")} |`;
-  const separatorRow = `| ${headers.map(() => "---").join(" | ")} |`;
-  const dataRows = rows.map(row => `| ${headers.map(h => `${row[h] ?? ""}`).join(" | ")} |`);
-  return [headerRow, separatorRow, ...dataRows].join("\n");
+async function fusionSmartRetrieval(
+  query: string,
+  interpretation: any,
+  tableColumns: string[],
+  connection: any
+): Promise<{ combinedTextForSummary: string; rawDataText: string; sourceNote: string }> {
+  const isSummary = interpretation.mode === "summary";
+
+  const snowflakeAggQuery = buildSnowflakeQuery(interpretation, tableColumns, false);
+  const snowflakeAggResults = await runSnowflakeQuery(connection, snowflakeAggQuery);
+  const aggTable = formatResultsAsTable(snowflakeAggResults);
+
+  if (isSummary) {
+    return {
+      combinedTextForSummary: aggTable,
+      rawDataText: aggTable,
+      sourceNote: "",
+    };
+  }
+
+  const pineconeQuery = `${interpretation.data_type || "financial"} ${query}`;
+  const embeddingResponse = await openai.embeddings.create({
+    input: pineconeQuery,
+    model: "text-embedding-3-small",
+  });
+  const queryVector = embeddingResponse.data[0].embedding;
+
+  const pineconeResults = await index.namespace("default").query({
+    vector: queryVector,
+    topK: 3,
+    includeMetadata: true,
+  });
+
+  const pineconeData = pineconeResults.matches.map((match, i) => {
+    const metadata = match.metadata || {};
+    return `Pinecone Raw Result ${i + 1}:\n${Object.entries(metadata).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`;
+  });
+
+  const snowflakeRawQuery = buildSnowflakeQuery(interpretation, tableColumns, true);
+  const snowflakeRawResults = await runSnowflakeQuery(connection, snowflakeRawQuery);
+  const rawData = snowflakeRawResults.map((row, i) =>
+    `Snowflake Raw Result ${i + 1}:\n${Object.entries(row).map(([k, v]) => `${k}: ${v ?? "n/a"}`).join("\n")}`
+  );
+
+  return {
+    combinedTextForSummary: [aggTable, ...pineconeData].join("\n\n"),
+    rawDataText: [...pineconeData, ...rawData].join("\n\n"),
+    sourceNote: snowflakeAggResults.length ? "" : "Note: results based on semantic search only.",
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -173,13 +250,23 @@ export async function POST(req: NextRequest) {
     });
 
     const tableColumns = await getTableColumns(connection);
-    const snowflakeQuery = buildSnowflakeQuery(interpretation, tableColumns);
-    const results = await runSnowflakeQuery(connection, snowflakeQuery);
+    const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(
+      query,
+      interpretation,
+      tableColumns,
+      connection
+    );
 
-    const formatted = formatResultsAsTable(results);
+    const summaryPrompt = `
+      You are a financial assistant. Based on the user's query: '${query}', and the aggregated data below, provide a concise summary (2–3 sentences) that directly answers the query.
 
-    const summaryPrompt = `You are a CPA assistant. Based on the user's query: '${query}', summarize the following:\n\n${formatted}`;
-    const gpt = await openai.chat.completions.create({
+      Aggregated Data:
+      ${combinedTextForSummary}
+
+      Note: ${sourceNote}
+    `.trim();
+
+    const gptResponse = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
         { role: "system", content: "You are a CPA assistant." },
@@ -188,13 +275,15 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({
-      summary: gpt.choices[0].message.content,
-      rawData: formatted,
+      summary: gptResponse.choices[0].message.content,
+      rawData: rawDataText,
     });
-  } catch (err) {
-    console.error("Error:", err);
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+  } catch (error) {
+    console.error("Error:", error);
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   } finally {
-    if (connection) connection.destroy(() => {});
+    if (connection) {
+      connection.destroy((err: Error | null) => err && console.error("Disconnect error:", err));
+    }
   }
 }
