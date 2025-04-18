@@ -103,15 +103,28 @@ export async function POST(req: NextRequest) {
     });
 
     // Connect to Snowflake
-    await new Promise((resolve, reject) => {
-      snowflakeConnection.connect((err, conn) => {
-        if (err) reject(err);
-        else resolve(conn);
+    console.log("Attempting Snowflake connection...");
+    try {
+      await new Promise((resolve, reject) => {
+        snowflakeConnection.connect((err, conn) => {
+          if (err) reject(err);
+          else resolve(conn);
+        });
       });
-    });
+      console.log("Snowflake connection established.");
+    } catch (error) {
+      console.error("Snowflake connection failed:", error);
+      throw new Error("Failed to connect to Snowflake: " + String(error));
+    }
 
     // Fetch column names from S3_GL
-    const tableColumns = await getTableColumns();
+    let tableColumns: string[] = [];
+    try {
+      tableColumns = await getTableColumns();
+      console.log("Fetched table columns:", tableColumns);
+    } catch (error) {
+      console.error("Failed to fetch table columns:", error);
+    }
 
     // Parse query for aggregation
     const queryLower = query.toLowerCase();
@@ -139,26 +152,18 @@ export async function POST(req: NextRequest) {
 
       const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
       const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-      const whereClauses = `
-        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%')
-      `;
-
       snowflakeQuery = `
         SELECT ${groupByFields.join(", ")}${groupByFields.length > 0 ? ", " : ""}SUM(BALANCE) as TOTAL_BALANCE
         FROM S3_GL
-        WHERE ${whereClauses}
+        WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
         ${groupByClause}
         ${orderByClause}
       `;
     } else {
-      const whereClauses = `
-        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%')
-      `;
-
       snowflakeQuery = `
         SELECT *
         FROM S3_GL
-        WHERE ${whereClauses}
+        WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
         LIMIT 10
       `;
     }
@@ -183,6 +188,7 @@ export async function POST(req: NextRequest) {
           .map(([key, value]) => `${key}: ${value || "n/a"}`)
           .join("\n")
       );
+      console.log("Snowflake Results:", snowflakeData);
     } catch (error) {
       console.error("Snowflake query failed, proceeding with Pinecone data:", error);
       snowflakeData = ["Snowflake query failed: " + String(error)];
@@ -200,7 +206,7 @@ export async function POST(req: NextRequest) {
     const summaryPrompt = `
 You are reviewing accounting data based on this query: '${query}'.
 
-The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && snowflakeData[0].startsWith("Snowflake query failed") ? "" : " and Snowflake (structured data)"}.
+The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && !snowflakeData[0].startsWith("Snowflake query failed") ? " and Snowflake (structured data)" : ""}.
 Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (PER_END_DATE) when requested, providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
 
 ${combinedData}
