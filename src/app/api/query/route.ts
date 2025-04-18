@@ -39,10 +39,10 @@ async function getTableColumns(): Promise<string[]> {
 
 // Mapping of common terms to column names
 const columnMapping: { [key: string]: string } = {
-  "accounting period": "Per_End_date",
-  "period": "Per_End_date",
-  "vendor": "VendorName",
-  "account name": "AcctName",
+  "accounting period": "PER_END_DATE",
+  "period": "PER_END_DATE",
+  "vendor": "VENDORNAME",
+  "account name": "ACCTNAME",
   "account": "ACCT_ID",
   "date": "POSTING_DATE",
   "well": "WELL_NAME",
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Refine query input for Pinecone
-    const refinedQuery = `electrical expenses ${query}`;
+    const refinedQuery = `expenses ${query}`;
     const embeddingResponse = await openai.embeddings.create({
       input: refinedQuery,
       model: "text-embedding-3-small",
@@ -125,50 +125,15 @@ export async function POST(req: NextRequest) {
       console.error("Failed to fetch table columns:", error);
     }
 
-    // Parse query for aggregation
-    const queryLower = query.toLowerCase();
-    const needsAggregation =
-      queryLower.includes("summarize") ||
-      queryLower.includes("total") ||
-      queryLower.includes("by");
-
-    let snowflakeQuery;
-    let snowflakeData: string[] = [];
-    if (needsAggregation) {
-      const byMatch = queryLower.match(/by\s+(.+)/);
-      const groupByFields: string[] = [];
-
-      if (byMatch) {
-        const byClause = byMatch[1];
-        const terms = byClause.split(/and|,/).map((term: string) => term.trim());
-        for (const term of terms) {
-          const column = mapQueryTermToColumn(term, tableColumns);
-          if (column && !groupByFields.includes(column)) {
-            groupByFields.push(column);
-          }
-        }
-      }
-
-      const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
-      const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-      snowflakeQuery = `
-        SELECT ${groupByFields.join(", ")}${groupByFields.length > 0 ? ", " : ""}SUM(BALANCE) as TOTAL_BALANCE
-        FROM STICK_DB.FINANCIAL.S3_GL
-        WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
-        ${groupByClause}
-        ${orderByClause}
-      `;
-    } else {
-      snowflakeQuery = `
-        SELECT *
-        FROM STICK_DB.FINANCIAL.S3_GL
-        WHERE ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%'
-        LIMIT 10
-      `;
-    }
-
+    // Simplified Snowflake query for testing
+    const snowflakeQuery = `
+      SELECT *
+      FROM STICK_DB.FINANCIAL.S3_GL
+      LIMIT 10
+    `;
     console.log("Executing Snowflake Query:", snowflakeQuery);
 
+    let snowflakeData: string[] = [];
     try {
       const snowflakeStartTime = Date.now();
       const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
@@ -181,6 +146,7 @@ export async function POST(req: NextRequest) {
         });
       });
       console.log("Snowflake Query Time:", Date.now() - snowflakeStartTime, "ms");
+      console.log("Snowflake Rows Returned:", snowflakeResults.length);
 
       snowflakeData = snowflakeResults.map((row) =>
         Object.entries(row)
@@ -205,7 +171,7 @@ export async function POST(req: NextRequest) {
 You are reviewing accounting data based on this query: '${query}'.
 
 The following data includes matches from Pinecone (semantic search)${snowflakeData.length > 0 && !snowflakeData[0].startsWith("Snowflake query failed") ? " and Snowflake (structured data)" : ""}.
-Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (Per_End_date) when requested, providing total BALANCE per period, and ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
+Write a very short summary (2–3 sentences max). If only Pinecone data is available, note that results are based on semantic search and may not be comprehensive. Summarize expenses by accounting period (PER_END_DATE) when requested, providing total BALANCE per period.
 
 ${combinedData}
     `.trim();
