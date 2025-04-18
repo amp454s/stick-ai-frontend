@@ -5,9 +5,8 @@ import snowflake from "snowflake-sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
-const index = pc.Index(process.env.PINECONE_INDEX!);
+const index = pc.Index(process.env.PINECONE_INDEX! });
 
-// Expanded column mapping
 const columnMapping: { [key: string]: string } = {
   "gl identifier": "UTM_ID",
   "company": "CO_ID",
@@ -42,23 +41,22 @@ const columnMapping: { [key: string]: string } = {
   "created by": "CREATED_BY",
   "account id": "ACCT_ID",
   "vendor name": "VENDORNAME",
-  "invoice type": "DESCRIPTION",
-  "description": "DESCRIPTION",
-  "annotation": "ANNOTATION"
+  "invoice type": "DESCRIPTION"
 };
 
-function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
+function mapFields(terms: any, type: "group_by" | "filters" | "exclude" | "include") {
   if (!terms) return [];
   const arr = Array.isArray(terms) ? terms : [terms];
   const mapped: string[] = [];
   const unmapped: string[] = [];
 
   arr.forEach((term) => {
+    if (typeof term !== "string") return;
     const key = term.toLowerCase().trim();
     if (columnMapping[key]) {
       mapped.push(columnMapping[key]);
     } else {
-      mapped.push(key); // fallback to raw
+      mapped.push(key); // fallback
       unmapped.push(term);
     }
   });
@@ -99,7 +97,7 @@ async function interpretQuery(query: string): Promise<any> {
         content: `You are an expert in interpreting financial queries. Given a user's query, extract:
 - data_type: 'expenses', 'balances', etc.
 - group_by: array of human-readable field names
-- filters: keyword-based or explicit column filters (can include exclude subobject)
+- filters: keyword-based or explicit column filters (can include exclude/include subobject)
 - mode: 'summary' or 'search'
 Return a valid JSON object.`,
       },
@@ -116,6 +114,7 @@ Return a valid JSON object.`,
     group_by: mapFields(parsed.group_by, "group_by"),
     filters: parsed.filters,
     exclude: parsed.filters?.exclude ? mapFields(parsed.filters.exclude, "exclude") : [],
+    include: parsed.filters?.include ? mapFields(parsed.filters.include, "include") : [],
   };
 }
 
@@ -151,7 +150,7 @@ function runSnowflakeQuery(conn: any, sqlText: string): Promise<any[]> {
     console.log("Executing query:\n", sqlText);
     conn.execute({
       sqlText,
-      complete: (err: Error | null, _stmt: any, rows: any[]) => {
+      complete: (err: any, _stmt: any, rows: any[]) => {
         if (err) reject(err);
         else resolve(rows);
       },
@@ -199,7 +198,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err: Error | null) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err: any) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -221,6 +220,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err: Error | null) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err: any) => err && console.error("Disconnect error:", err));
   }
 }
