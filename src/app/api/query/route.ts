@@ -5,7 +5,7 @@ import snowflake from "snowflake-sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
-const index = pc.Index(process.env.PINECONE_INDEX! );
+const index = pc.Index(process.env.PINECONE_INDEX!);
 
 // Expanded column mapping
 const columnMapping: { [key: string]: string } = {
@@ -41,9 +41,7 @@ const columnMapping: { [key: string]: string } = {
   "created by": "CREATED_BY",
   "account id": "ACCT_ID",
   "vendor name": "VENDORNAME",
-  "invoice type": "DESCRIPTION",
-  "description": "DESCRIPTION",
-  "annotation": "ANNOTATION"
+  "invoice type": "DESCRIPTION"
 };
 
 function mapFields(terms: any, type: "group_by" | "filters" | "exclude") {
@@ -87,7 +85,7 @@ async function interpretQuery(query: string): Promise<any> {
 - group_by: array of human-readable field names
 - filters: keyword-based or explicit column filters (can include exclude subobject)
 - mode: 'summary' or 'search'
-Return a valid JSON object.`,
+Return a valid JSON object.`
       },
       { role: "user", content: query },
     ],
@@ -139,14 +137,14 @@ function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = fal
 function runSnowflakeQuery(conn: any, sqlText: string): Promise<any[]> {
   return new Promise((resolve, reject) => {
     console.log("Executing query:\n", sqlText);
-   conn.execute({
-  sqlText,
-  complete: (err: Error | null, _stmt: any, rows: any[]) => {
-    if (err) reject(err);
-    else resolve(rows);
-  },
-});
-
+    conn.execute({
+      sqlText,
+      complete: (err: Error | null, _stmt: any, rows: any[]) => {
+        if (err) reject(err);
+        else resolve(rows);
+      },
+    });
+  });
 }
 
 async function getTableColumns(conn: any): Promise<string[]> {
@@ -189,7 +187,7 @@ export async function POST(req: NextRequest) {
       warehouse: "STICK_WH",
     });
 
-    await new Promise((res, rej) => conn.connect((err) => (err ? rej(err) : res(null))));
+    await new Promise((res, rej) => conn.connect((err: Error | null) => (err ? rej(err) : res(null))));
     const columns = await getTableColumns(conn);
     const { combinedTextForSummary, rawDataText, sourceNote } = await fusionSmartRetrieval(query, interpretation, columns, conn);
 
@@ -211,6 +209,6 @@ export async function POST(req: NextRequest) {
     console.error("Error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   } finally {
-    if (conn) conn.destroy((err) => err && console.error("Disconnect error:", err));
+    if (conn) conn.destroy((err: Error | null) => err && console.error("Disconnect error:", err));
   }
 }
