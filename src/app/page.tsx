@@ -70,9 +70,8 @@ export default function Home() {
         </div>
       )}
       {rawData && (
-        <div className="mt-6 w-full max-w-md p-4 bg-gray-800 rounded-lg text-gray-100">
-          <h2 className="text-xl font-semibold mb-2">Raw Data:</h2>
-          <pre className="whitespace-pre-wrap">{rawData}</pre>
+        <div className="mt-6 w-full max-w-full overflow-x-auto border rounded-lg bg-gray-800">
+          <pre className="whitespace-pre font-mono text-sm p-4">{rawData}</pre>
         </div>
       )}
     </div>
