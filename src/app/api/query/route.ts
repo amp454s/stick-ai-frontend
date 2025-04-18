@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import snowflake from "snowflake-sdk";
 
+// Suppressing deprecation warning for util._extend (NODE_OPTIONS=--no-deprecation)
 // Initialize clients
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
@@ -66,9 +67,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "Query is required" }, { status: 400 });
     }
 
-    // Create embedding for query
+    // Refine query input for Pinecone
+    const refinedQuery = `electrical expenses ${query}`;
     const embeddingResponse = await openai.embeddings.create({
-      input: query,
+      input: refinedQuery,
       model: "text-embedding-3-small",
     });
     const queryVector = embeddingResponse.data[0].embedding;
@@ -119,6 +121,7 @@ export async function POST(req: NextRequest) {
       queryLower.includes("by");
 
     let snowflakeQuery;
+    let snowflakeData: string[] = [];
     if (needsAggregation) {
       const byMatch = queryLower.match(/by\s+(.+)/);
       const groupByFields: string[] = [];
@@ -136,9 +139,8 @@ export async function POST(req: NextRequest) {
 
       const groupByClause = groupByFields.length > 0 ? `GROUP BY ${groupByFields.join(", ")}` : "";
       const orderByClause = groupByFields.length > 0 ? `ORDER BY ${groupByFields.join(", ")}` : "";
-      // Use simpler WHERE clause to match electrical expenses
       const whereClauses = `
-        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%')
+        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%')
       `;
 
       snowflakeQuery = `
@@ -150,7 +152,7 @@ export async function POST(req: NextRequest) {
       `;
     } else {
       const whereClauses = `
-        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%')
+        (ACCTNAME LIKE '%electric%' OR DESCRIPTION LIKE '%electric%' OR ANNOTATION LIKE '%electric%')
       `;
 
       snowflakeQuery = `
@@ -163,23 +165,28 @@ export async function POST(req: NextRequest) {
 
     console.log("Executing Snowflake Query:", snowflakeQuery);
 
-    const snowflakeStartTime = Date.now();
-    const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
-      snowflakeConnection.execute({
-        sqlText: snowflakeQuery,
-        complete: (err, stmt, rows) => {
-          if (err) reject(err);
-          else resolve(rows || []);
-        },
+    try {
+      const snowflakeStartTime = Date.now();
+      const snowflakeResults = await new Promise<any[]>((resolve, reject) => {
+        snowflakeConnection.execute({
+          sqlText: snowflakeQuery,
+          complete: (err, stmt, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          },
+        });
       });
-    });
-    console.log("Snowflake Query Time:", Date.now() - snowflakeStartTime, "ms");
+      console.log("Snowflake Query Time:", Date.now() - snowflakeStartTime, "ms");
 
-    const snowflakeData = snowflakeResults.map((row) =>
-      Object.entries(row)
-        .map(([key, value]) => `${key}: ${value || "n/a"}`)
-        .join("\n")
-    );
+      snowflakeData = snowflakeResults.map((row) =>
+        Object.entries(row)
+          .map(([key, value]) => `${key}: ${value || "n/a"}`)
+          .join("\n")
+      );
+    } catch (error) {
+      console.error("Snowflake query failed, proceeding with Pinecone data:", error);
+      snowflakeData = ["Snowflake query failed: " + String(error)];
+    }
 
     // Combine Pinecone and Snowflake data
     const combinedData = [
@@ -194,7 +201,7 @@ export async function POST(req: NextRequest) {
 You are reviewing accounting data based on this query: '${query}'.
 
 The following data includes matches from Pinecone (semantic search) and Snowflake (structured data).
-Write a very short summary (2–3 sentences max). Summarize totals by accounting period (PER_END_DATE) when requested, focusing on key metrics like BALANCE, and include relevant details like vendors or account names.
+Write a very short summary (2–3 sentences max). Summarize only electrical expenses (e.g., accounts with "electric" in ACCTNAME, DESCRIPTION, or ANNOTATION) by accounting period (PER_END_DATE) when requested, providing total BALANCE per period. Ignore non-electrical expenses like "Field Equipment Expense" unless explicitly mentioned.
 
 ${combinedData}
     `.trim();
