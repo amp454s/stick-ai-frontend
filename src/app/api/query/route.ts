@@ -1,3 +1,4 @@
+// --- Stick AI Route Handler with Full Fixes ---
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
@@ -47,47 +48,46 @@ const columnMapping: { [key: string]: string } = {
 function safeMapFields(terms: any, type: string, columns: string[]): string[] {
   if (!terms) return [];
   const arr = Array.isArray(terms) ? terms : [terms];
+  const seen = new Set();
   const mapped: string[] = [];
-  arr.forEach((term) => {
-    if (typeof term === "string") {
-      const key = term.toLowerCase().trim();
-      const mappedValue = columnMapping[key] || key;
-      if (!columns.includes(mappedValue)) {
-        console.warn(`⚠️ Unmapped ${type} field fallback: '${term}' → '${mappedValue}'`);
-      } else {
-        mapped.push(mappedValue);
-      }
+
+  for (const term of arr) {
+    if (typeof term !== "string") continue;
+    const key = term.toLowerCase().trim();
+    const mappedValue = columnMapping[key] || key;
+    if (!columns.includes(mappedValue)) {
+      console.warn(`⚠️ Unmapped ${type} field fallback: '${term}' → '${mappedValue}'`);
+    } else if (!seen.has(mappedValue)) {
+      mapped.push(mappedValue);
+      seen.add(mappedValue);
     }
-  });
+  }
+
   return mapped;
 }
 
 function extractExcludeClauses(filters: any, columns: string[]): string[] {
   const clauses: string[] = [];
-
   for (const [key, val] of Object.entries(filters || {})) {
     if (val && typeof val === "object" && "exclude" in val) {
       const field = columnMapping[key.toLowerCase()] || key;
-      if (columns.map(c => c.toLowerCase()).includes(field.toLowerCase())) {
+      if (columns.includes(field)) {
         const values = Array.isArray(val.exclude) ? val.exclude : [val.exclude];
         clauses.push(...values.map((v) => `${field} != '${v}'`));
       }
     }
   }
-
   return clauses;
 }
 
 function extractKeywords(filters: any): string[] {
   const keywords: string[] = [];
-
   for (const [k, v] of Object.entries(filters || {})) {
     if (k.toLowerCase() === "keyword") {
       if (Array.isArray(v)) keywords.push(...v);
       else if (typeof v === "string") keywords.push(v);
     }
   }
-
   return keywords;
 }
 
