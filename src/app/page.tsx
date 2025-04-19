@@ -6,118 +6,78 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [summary, setSummary] = useState("");
   const [rawData, setRawData] = useState("");
+  const [debug, setDebug] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const runQuery = async () => {
     setLoading(true);
     setError("");
     setSummary("");
     setRawData("");
+    setDebug("");
 
     try {
       const res = await fetch("/api/query", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
+        headers: { "Content-Type": "application/json" },
       });
 
-      if (!res.ok) throw new Error("API request failed");
-
-      const data = await res.json();
-      setSummary(data.summary || "No summary available.");
-      setRawData(data.rawData || "No raw data available.");
-    } catch (err) {
-      console.error("Error:", err);
-      setError("An error occurred while processing your request.");
+      if (!res.ok) throw new Error(await res.text());
+      const { summary, rawData, debug } = await res.json();
+      setSummary(summary);
+      setRawData(rawData);
+      setDebug(debug);
+    } catch (err: any) {
+      setError(err.message || "Unexpected error.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Helper to convert Markdown table to CSV
-  const convertMarkdownToCSV = (markdown: string): string => {
-    const lines = markdown.trim().split("\n");
-    const tableLines = lines.filter((line) => line.includes("|"));
-    const cleanedLines = tableLines
-      .map((line) =>
-        line
-          .trim()
-          .replace(/^\|/, "") // remove leading |
-          .replace(/\|$/, "") // remove trailing |
-          .split("|")
-          .map((cell) => `"${cell.trim().replace(/"/g, '""')}"`) // wrap in quotes and escape quotes
-          .join(",")
-      );
-    return cleanedLines.join("\n");
-  };
-
-  const handleDownloadCSV = () => {
-    const csvContent = convertMarkdownToCSV(rawData);
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", "stick_ai_output.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center justify-center p-4">
-      <h1 className="text-3xl font-bold mb-6 text-gray-100">
-        Stick AI - Financial Query Assistant
-      </h1>
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-md bg-gray-800 p-4 rounded-lg"
-      >
-        <textarea
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask a financial question (e.g., 'What’s the balance for vendor XYZ?')"
-          className="w-full p-2 mb-4 bg-gray-700 text-gray-100 border-teal-200 rounded focus:ring-teal-500 resize-y min-h-[80px] placeholder-gray-400"
-          rows={3}
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full p-2 bg-teal-500 text-white rounded hover:bg-teal-600 disabled:bg-gray-600"
-        >
-          {loading ? "Processing..." : "Submit"}
-        </button>
-      </form>
+    <main className="max-w-5xl mx-auto p-8">
+      <h1 className="text-3xl font-bold mb-4">Stick AI - Financial Query Assistant</h1>
 
-      {error && (
-        <div className="mt-6 w-full max-w-md p-4 bg-red-800 rounded-lg text-red-100">
-          <h2 className="text-xl font-semibold mb-2">Error:</h2>
-          <p>{error}</p>
-        </div>
-      )}
+      <textarea
+        rows={3}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="e.g. summarize LOE expenses by month for company 1"
+        className="w-full p-3 border rounded mb-4"
+      />
+
+      <button
+        onClick={runQuery}
+        disabled={loading}
+        className="bg-blue-600 text-white px-6 py-2 rounded disabled:opacity-50"
+      >
+        {loading ? "Thinking..." : "Submit"}
+      </button>
+
+      {error && <pre className="text-red-600 mt-4 whitespace-pre-wrap">{error}</pre>}
 
       {summary && (
-        <div className="mt-6 w-full max-w-md p-4 bg-gray-800 rounded-lg text-gray-100">
+        <section className="mt-8">
           <h2 className="text-xl font-semibold mb-2">Summary:</h2>
-          <p>{summary}</p>
-        </div>
+          <p className="whitespace-pre-wrap">{summary}</p>
+        </section>
       )}
 
       {rawData && (
-        <div className="mt-6 w-full max-w-full overflow-x-auto border rounded-lg bg-gray-800">
-          <h2 className="text-xl font-semibold p-4 text-gray-100">Raw Data:</h2>
-          <pre className="whitespace-pre font-mono text-sm p-4">{rawData}</pre>
-          <div className="p-4">
-            <button
-              onClick={handleDownloadCSV}
-              className="px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700"
-            >
-              Download CSV
-            </button>
-          </div>
-        </div>
+        <section className="mt-8">
+          <h2 className="text-xl font-semibold mb-2">Raw Data:</h2>
+          <pre className="bg-gray-100 p-4 rounded whitespace-pre overflow-auto">{rawData}</pre>
+        </section>
       )}
-    </div>
+
+      {debug && (
+        <section className="mt-8">
+          <h2 className="text-xl font-semibold mb-2">Query Debug:</h2>
+          <pre className="bg-yellow-100 p-4 rounded whitespace-pre overflow-auto">{debug}</pre>
+        </section>
+      )}
+    </main>
   );
 }
