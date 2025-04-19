@@ -99,31 +99,32 @@ Return a valid JSON object.`,
   console.log("Raw GPT interpretation output:", content);
   const parsed = JSON.parse(content);
 
-  // Handle malformed exclude structure like { exclude: { field: "company", value: "10" } }
-  const normalizedExclude = parsed.filters?.exclude?.field
-    ? { [parsed.filters.exclude.field]: parsed.filters.exclude.value }
-    : parsed.filters?.exclude;
-
-  // Keyword fallback
-  if (!parsed.filters?.keyword && query.toLowerCase().includes("electric")) {
-    parsed.filters.keyword = "electric";
-  }
+  const group_by = safeMapFields(parsed.group_by, "group_by", columns);
+  const exclude = parsed.filters?.exclude;
+  const mappedExclude = (exclude && typeof exclude === 'object' && !Array.isArray(exclude)) ?
+    safeMapFields(Object.keys(exclude), "exclude", columns).reduce((acc: any, key: string) => {
+      acc[key] = exclude[key];
+      return acc;
+    }, {}) : {};
 
   return {
     ...parsed,
-    group_by: safeMapFields(parsed.group_by, "group_by", columns),
-    filters: parsed.filters,
-    exclude: safeMapFields(normalizedExclude, "exclude", columns),
+    group_by,
+    filters: parsed.filters || {},
+    exclude: mappedExclude
   };
 }
 
 function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = false): string {
   const groupBy = (interpretation.group_by || []).filter((col: string) => columns.includes(col));
   const filters = interpretation.filters || {};
-  const keyword = filters.keyword || "";
-  const excludeFilters = interpretation.exclude || [];
+  const keyword = Array.isArray(filters.keyword) ? filters.keyword.join(" ") : filters.keyword || "";
+  const excludeFilters = interpretation.exclude || {};
 
-  const excludeClauses = excludeFilters.map((field: string) => `${field} != '10'`);
+  const excludeClauses = Object.entries(excludeFilters).map(([k, v]) => {
+    const field = columnMapping[k.toLowerCase()] || k;
+    return Array.isArray(v) ? v.map(val => `${field} != '${val}'`).join(" AND ") : `${field} != '${v}'`;
+  });
 
   let whereClause = "";
   if (keyword) {
