@@ -62,6 +62,35 @@ function safeMapFields(terms: any, type: string, columns: string[]): string[] {
   return mapped;
 }
 
+function extractExcludeClauses(filters: any, columns: string[]): string[] {
+  const clauses: string[] = [];
+
+  for (const [key, val] of Object.entries(filters || {})) {
+    if (typeof val === "object" && val.exclude) {
+      const field = columnMapping[key.toLowerCase()] || key;
+      if (columns.includes(field)) {
+        const values = Array.isArray(val.exclude) ? val.exclude : [val.exclude];
+        clauses.push(...values.map((v) => `${field} != '${v}'`));
+      }
+    }
+  }
+
+  return clauses;
+}
+
+function extractKeywords(filters: any): string[] {
+  const keywords: string[] = [];
+
+  for (const [k, v] of Object.entries(filters || {})) {
+    if (k.toLowerCase() === "keyword") {
+      if (Array.isArray(v)) keywords.push(...v);
+      else if (typeof v === "string") keywords.push(v);
+    }
+  }
+
+  return keywords;
+}
+
 function formatDate(value: any): string {
   const date = new Date(value);
   return isNaN(date.getTime()) ? value : `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
@@ -99,38 +128,28 @@ Return a valid JSON object.`,
   console.log("Raw GPT interpretation output:", content);
   const parsed = JSON.parse(content);
 
-  const group_by = safeMapFields(parsed.group_by, "group_by", columns);
-  const exclude = parsed.filters?.exclude;
-  const mappedExclude = (exclude && typeof exclude === 'object' && !Array.isArray(exclude)) ?
-    safeMapFields(Object.keys(exclude), "exclude", columns).reduce((acc: any, key: string) => {
-      acc[key] = exclude[key];
-      return acc;
-    }, {}) : {};
-
   return {
     ...parsed,
-    group_by,
-    filters: parsed.filters || {},
-    exclude: mappedExclude
+    group_by: safeMapFields(parsed.group_by, "group_by", columns),
+    filters: parsed.filters,
+    exclude: extractExcludeClauses(parsed.filters, columns),
   };
 }
 
 function buildSnowflakeQuery(interpretation: any, columns: string[], isRaw = false): string {
   const groupBy = (interpretation.group_by || []).filter((col: string) => columns.includes(col));
   const filters = interpretation.filters || {};
-  const keyword = Array.isArray(filters.keyword) ? filters.keyword.join(" ") : filters.keyword || "";
-  const excludeFilters = interpretation.exclude || {};
-
-  const excludeClauses = Object.entries(excludeFilters).map(([k, v]) => {
-    const field = columnMapping[k.toLowerCase()] || k;
-    return Array.isArray(v) ? v.map(val => `${field} != '${val}'`).join(" AND ") : `${field} != '${v}'`;
-  });
+  const keywords = extractKeywords(filters);
+  const excludeClauses = interpretation.exclude || [];
 
   let whereClause = "";
-  if (keyword) {
-    const k = keyword.toLowerCase();
-    whereClause = `(DESCRIPTION ILIKE '%${k}%' OR VENDORNAME ILIKE '%${k}%' OR ACCTNAME ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`;
+  if (keywords.length) {
+    const keywordSearch = keywords.map((k) =>
+      `(DESCRIPTION ILIKE '%${k}%' OR VENDORNAME ILIKE '%${k}%' OR ACCTNAME ILIKE '%${k}%' OR ANNOTATION ILIKE '%${k}%')`
+    ).join(" AND ");
+    whereClause += keywordSearch;
   }
+
   if (excludeClauses.length) {
     whereClause += (whereClause ? " AND " : "") + excludeClauses.join(" AND ");
   }
@@ -165,19 +184,9 @@ async function getTableColumns(conn: any): Promise<string[]> {
 }
 
 async function fusionSmartRetrieval(query: string, interpretation: any, tableColumns: string[], conn: any) {
-  const isSummary = interpretation.mode === "summary" || interpretation.mode === "Summarize";
-
-  const embeddingResponse = await openai.embeddings.create({
-    input: query,
-    model: "text-embedding-3-small",
-  });
+  const embeddingResponse = await openai.embeddings.create({ input: query, model: "text-embedding-3-small" });
   const vector = embeddingResponse.data[0].embedding;
-
-  const pineconeResults = await index.namespace("default").query({
-    vector,
-    topK: 5,
-    includeMetadata: true,
-  });
+  const pineconeResults = await index.namespace("default").query({ vector, topK: 5, includeMetadata: true });
 
   const pineconeChunks = pineconeResults.matches.map((match, i) => {
     const meta = match.metadata || {};
