@@ -68,7 +68,7 @@ function extractExcludeClauses(filters: any, columns: string[]): string[] {
   for (const [key, val] of Object.entries(filters || {})) {
     if (val && typeof val === "object" && "exclude" in val) {
       const field = columnMapping[key.toLowerCase()] || key;
-      if (columns.includes(field)) {
+      if (columns.map(c => c.toLowerCase()).includes(field.toLowerCase())) {
         const values = Array.isArray(val.exclude) ? val.exclude : [val.exclude];
         clauses.push(...values.map((v) => `${field} != '${v}'`));
       }
