@@ -75,7 +75,9 @@ export default function Home() {
       {debug && (
         <section className="mt-8">
           <h2 className="text-xl font-semibold mb-2">Query Debug:</h2>
-          <pre className="bg-yellow-100 p-4 rounded whitespace-pre overflow-auto">{debug}</pre>
+          <pre className="bg-yellow-100 p-4 rounded whitespace-pre overflow-auto">
+            {typeof debug === "string" ? debug : JSON.stringify(debug, null, 2)}
+          </pre>
         </section>
       )}
     </main>
